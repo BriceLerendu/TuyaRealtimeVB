@@ -5,6 +5,6 @@ Module Program
     Sub Main()
         System.Windows.Forms.Application.EnableVisualStyles()
         System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(False)
-        System.Windows.Forms.Application.Run(New MainForm())
+        System.Windows.Forms.Application.Run(New DashboardForm())
     End Sub
 End Module
