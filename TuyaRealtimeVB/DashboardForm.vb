@@ -69,7 +69,7 @@ Public Class DashboardForm
         _statusLabel.Location = New Point(10, 7)
         bottomPanel.Controls.Add(_statusLabel)
 
-        ' IMPORTANT: Ordre d'ajout inversé pour que Dock fonctionne correctement
+        ' IMPORTANT: Ajouter dans cet ordre précis
         Me.Controls.Add(_devicesPanel)
         Me.Controls.Add(bottomPanel)
         Me.Controls.Add(headerPanel)
@@ -77,12 +77,15 @@ Public Class DashboardForm
 
     Private Sub InitializeServices()
         Try
-            ' Initialiser la configuration et le token provider
             Dim cfg = TuyaConfig.Load()
             Dim tokenProvider As New TuyaTokenProvider(cfg)
 
-            ' Créer le client API
             _apiClient = New TuyaApiClient(cfg, tokenProvider)
+
+            Task.Run(Async Function()
+                         Await _apiClient.InitializeRoomsCacheAsync()
+                         Me.Invoke(Sub() UpdateStatus("Cache des pièces chargé"))
+                     End Function)
 
             _httpServer = New TuyaHttpServer()
             AddHandler _httpServer.EventReceived, AddressOf OnEventReceived
@@ -117,13 +120,11 @@ Public Class DashboardForm
             _eventCount += 1
             _eventCountLabel.Text = $"Événements: {_eventCount}"
 
-            ' Créer ou mettre à jour la carte de l'appareil
             If Not _deviceCards.ContainsKey(devId) Then
                 Dim card As New DeviceCard(devId)
                 _deviceCards(devId) = card
                 _devicesPanel.Controls.Add(card)
 
-                ' Charger les infos de l'appareil via l'API en arrière-plan
                 Task.Run(Async Function()
                              Dim deviceInfo = Await _apiClient.GetDeviceInfoAsync(devId)
                              If deviceInfo IsNot Nothing Then
@@ -134,7 +135,6 @@ Public Class DashboardForm
 
             Dim deviceCard = _deviceCards(devId)
 
-            ' Mettre à jour les données
             If status IsNot Nothing Then
                 For Each item In status
                     Dim code = item.SelectToken("code")?.ToString()
@@ -148,7 +148,6 @@ Public Class DashboardForm
             End If
 
             deviceCard.UpdateTimestamp()
-
             UpdateStatus($"Dernier événement: {devId} - {DateTime.Now:HH:mm:ss}")
 
         Catch ex As Exception
@@ -161,7 +160,6 @@ Public Class DashboardForm
             Me.Invoke(Sub() UpdateStatus(message))
             Return
         End If
-
         _statusLabel.Text = message
     End Sub
 
@@ -172,12 +170,12 @@ Public Class DashboardForm
     End Sub
 End Class
 
-' Classe représentant une carte d'appareil
 Public Class DeviceCard
     Inherits Panel
 
     Private _deviceId As String
     Private _nameLabel As System.Windows.Forms.Label
+    Private _roomLabel As System.Windows.Forms.Label
     Private _idLabel As System.Windows.Forms.Label
     Private _statusLabel As System.Windows.Forms.Label
     Private _timestampLabel As System.Windows.Forms.Label
@@ -193,7 +191,6 @@ Public Class DeviceCard
         Me.Padding = New Padding(15)
         Me.Margin = New Padding(10)
 
-        ' En-tête
         _nameLabel = New System.Windows.Forms.Label()
         _nameLabel.Text = "Chargement..."
         _nameLabel.Font = New System.Drawing.Font("Segoe UI", 11, FontStyle.Bold)
@@ -202,16 +199,23 @@ Public Class DeviceCard
         _nameLabel.Location = New Point(15, 15)
         Me.Controls.Add(_nameLabel)
 
-        ' ID (petit texte sous le nom)
+        _roomLabel = New System.Windows.Forms.Label()
+        _roomLabel.Text = ""
+        _roomLabel.Font = New System.Drawing.Font("Segoe UI", 9, FontStyle.Italic)
+        _roomLabel.ForeColor = Color.FromArgb(100, 100, 100)
+        _roomLabel.AutoSize = True
+        _roomLabel.Location = New Point(15, 38)
+        _roomLabel.Visible = False
+        Me.Controls.Add(_roomLabel)
+
         _idLabel = New System.Windows.Forms.Label()
         _idLabel.Text = deviceId
-        _idLabel.Font = New System.Drawing.Font("Segoe UI", 8)
-        _idLabel.ForeColor = Color.Gray
+        _idLabel.Font = New System.Drawing.Font("Segoe UI", 7)
+        _idLabel.ForeColor = Color.LightGray
         _idLabel.AutoSize = True
-        _idLabel.Location = New Point(15, 38)
+        _idLabel.Location = New Point(15, 58)
         Me.Controls.Add(_idLabel)
 
-        ' Statut
         _statusLabel = New System.Windows.Forms.Label()
         _statusLabel.Text = "●"
         _statusLabel.Font = New System.Drawing.Font("Segoe UI", 16)
@@ -220,19 +224,17 @@ Public Class DeviceCard
         _statusLabel.Location = New Point(280, 12)
         Me.Controls.Add(_statusLabel)
 
-        ' Timestamp
         _timestampLabel = New System.Windows.Forms.Label()
         _timestampLabel.Text = DateTime.Now.ToString("HH:mm:ss")
         _timestampLabel.Font = New System.Drawing.Font("Segoe UI", 8)
         _timestampLabel.ForeColor = Color.Gray
         _timestampLabel.AutoSize = True
-        _timestampLabel.Location = New Point(15, 58)
+        _timestampLabel.Location = New Point(15, 95)
         Me.Controls.Add(_timestampLabel)
 
-        ' Panel des propriétés
         _propertiesPanel = New TableLayoutPanel()
-        _propertiesPanel.Location = New Point(15, 80)
-        _propertiesPanel.Size = New Size(280, 105)
+        _propertiesPanel.Location = New Point(15, 115)
+        _propertiesPanel.Size = New Size(280, 70)
         _propertiesPanel.ColumnCount = 2
         _propertiesPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50))
         _propertiesPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50))
@@ -242,14 +244,18 @@ Public Class DeviceCard
 
     Public Sub UpdateDeviceInfo(deviceInfo As DeviceInfo)
         If deviceInfo IsNot Nothing Then
-            ' Mettre à jour le nom
             If Not String.IsNullOrEmpty(deviceInfo.Name) Then
                 _nameLabel.Text = deviceInfo.Name
             ElseIf Not String.IsNullOrEmpty(deviceInfo.ProductName) Then
                 _nameLabel.Text = deviceInfo.ProductName
             End If
 
-            ' Mettre à jour le statut online/offline
+            If Not String.IsNullOrEmpty(deviceInfo.RoomName) Then
+                _roomLabel.Text = $"📍 {deviceInfo.RoomName}"
+                _roomLabel.Visible = True
+                _idLabel.Location = New Point(15, 78)
+            End If
+
             If deviceInfo.IsOnline Then
                 UpdateStatus("online")
             Else
@@ -280,11 +286,9 @@ Public Class DeviceCard
             _properties(code) = valueLabel
         End If
 
-        ' Formatage de la valeur
         Dim displayValue = FormatValue(code, value)
         _properties(code).Text = displayValue
 
-        ' Couleur selon le type
         If code.Contains("switch") OrElse code = "doorcontact_state" Then
             _properties(code).ForeColor = If(value = "true" Or value = "True", Color.Green, Color.Red)
         ElseIf code.Contains("temperature") Then
@@ -304,11 +308,7 @@ Public Class DeviceCard
         ElseIf code.Contains("power") Then
             Return $"{value} W"
         ElseIf code.Contains("switch") OrElse code = "doorcontact_state" Then
-            If value = "true" Or value = "True" Then
-                Return "ON"
-            Else
-                Return "OFF"
-            End If
+            Return If(value = "true" Or value = "True", "ON", "OFF")
         Else
             Return value
         End If

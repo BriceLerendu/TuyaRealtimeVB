@@ -98,11 +98,6 @@ Public Class TuyaTokenProvider
             Dim expiresIn = result.Value(Of Integer?)("expire_time")
 
             ' ✅ CORRECTION : Récupération du UID
-            Dim uid = result.Value(Of String)("uid")
-            If Not String.IsNullOrEmpty(uid) Then
-                _cfg.Uid = uid
-                Console.WriteLine($"✅ UID stocké : {uid}")
-            End If
 
             If Not expiresIn.HasValue OrElse expiresIn.Value = 0 Then
                 _expiryUtc = DateTime.UtcNow.AddHours(2)
