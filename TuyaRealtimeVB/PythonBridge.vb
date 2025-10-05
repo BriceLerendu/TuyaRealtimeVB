@@ -18,7 +18,7 @@ Public Class PythonBridge
             _pythonProcess.StartInfo.UseShellExecute = False
             _pythonProcess.StartInfo.RedirectStandardOutput = True
             _pythonProcess.StartInfo.RedirectStandardError = True
-            _pythonProcess.StartInfo.CreateNoWindow = False
+            _pythonProcess.StartInfo.CreateNoWindow = True
             _pythonProcess.StartInfo.StandardOutputEncoding = System.Text.Encoding.UTF8
             _pythonProcess.StartInfo.StandardErrorEncoding = System.Text.Encoding.UTF8
 
