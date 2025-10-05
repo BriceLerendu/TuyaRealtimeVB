@@ -12,6 +12,7 @@ Public Class DashboardForm
     Private _statusLabel As System.Windows.Forms.Label
     Private _eventCountLabel As System.Windows.Forms.Label
     Private _eventCount As Integer = 0
+    Private _apiClient As TuyaApiClient
 
     Public Sub New()
         InitializeComponent()
@@ -69,13 +70,20 @@ Public Class DashboardForm
         bottomPanel.Controls.Add(_statusLabel)
 
         ' IMPORTANT: Ordre d'ajout inversé pour que Dock fonctionne correctement
-        Me.Controls.Add(_devicesPanel)  ' Fill en premier
-        Me.Controls.Add(bottomPanel)     ' Bottom ensuite
-        Me.Controls.Add(headerPanel)     ' Top en dernier
+        Me.Controls.Add(_devicesPanel)
+        Me.Controls.Add(bottomPanel)
+        Me.Controls.Add(headerPanel)
     End Sub
 
     Private Sub InitializeServices()
         Try
+            ' Initialiser la configuration et le token provider
+            Dim cfg = TuyaConfig.Load()
+            Dim tokenProvider As New TuyaTokenProvider(cfg)
+
+            ' Créer le client API
+            _apiClient = New TuyaApiClient(cfg, tokenProvider)
+
             _httpServer = New TuyaHttpServer()
             AddHandler _httpServer.EventReceived, AddressOf OnEventReceived
             _httpServer.Start()
@@ -114,6 +122,14 @@ Public Class DashboardForm
                 Dim card As New DeviceCard(devId)
                 _deviceCards(devId) = card
                 _devicesPanel.Controls.Add(card)
+
+                ' Charger les infos de l'appareil via l'API en arrière-plan
+                Task.Run(Async Function()
+                             Dim deviceInfo = Await _apiClient.GetDeviceInfoAsync(devId)
+                             If deviceInfo IsNot Nothing Then
+                                 Me.Invoke(Sub() card.UpdateDeviceInfo(deviceInfo))
+                             End If
+                         End Function)
             End If
 
             Dim deviceCard = _deviceCards(devId)
@@ -162,6 +178,7 @@ Public Class DeviceCard
 
     Private _deviceId As String
     Private _nameLabel As System.Windows.Forms.Label
+    Private _idLabel As System.Windows.Forms.Label
     Private _statusLabel As System.Windows.Forms.Label
     Private _timestampLabel As System.Windows.Forms.Label
     Private _propertiesPanel As TableLayoutPanel
@@ -178,12 +195,21 @@ Public Class DeviceCard
 
         ' En-tête
         _nameLabel = New System.Windows.Forms.Label()
-        _nameLabel.Text = deviceId
+        _nameLabel.Text = "Chargement..."
         _nameLabel.Font = New System.Drawing.Font("Segoe UI", 11, FontStyle.Bold)
         _nameLabel.ForeColor = Color.FromArgb(45, 45, 48)
         _nameLabel.AutoSize = True
         _nameLabel.Location = New Point(15, 15)
         Me.Controls.Add(_nameLabel)
+
+        ' ID (petit texte sous le nom)
+        _idLabel = New System.Windows.Forms.Label()
+        _idLabel.Text = deviceId
+        _idLabel.Font = New System.Drawing.Font("Segoe UI", 8)
+        _idLabel.ForeColor = Color.Gray
+        _idLabel.AutoSize = True
+        _idLabel.Location = New Point(15, 38)
+        Me.Controls.Add(_idLabel)
 
         ' Statut
         _statusLabel = New System.Windows.Forms.Label()
@@ -200,18 +226,36 @@ Public Class DeviceCard
         _timestampLabel.Font = New System.Drawing.Font("Segoe UI", 8)
         _timestampLabel.ForeColor = Color.Gray
         _timestampLabel.AutoSize = True
-        _timestampLabel.Location = New Point(15, 40)
+        _timestampLabel.Location = New Point(15, 58)
         Me.Controls.Add(_timestampLabel)
 
         ' Panel des propriétés
         _propertiesPanel = New TableLayoutPanel()
-        _propertiesPanel.Location = New Point(15, 65)
-        _propertiesPanel.Size = New Size(280, 120)
+        _propertiesPanel.Location = New Point(15, 80)
+        _propertiesPanel.Size = New Size(280, 105)
         _propertiesPanel.ColumnCount = 2
         _propertiesPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50))
         _propertiesPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 50))
         _propertiesPanel.AutoScroll = True
         Me.Controls.Add(_propertiesPanel)
+    End Sub
+
+    Public Sub UpdateDeviceInfo(deviceInfo As DeviceInfo)
+        If deviceInfo IsNot Nothing Then
+            ' Mettre à jour le nom
+            If Not String.IsNullOrEmpty(deviceInfo.Name) Then
+                _nameLabel.Text = deviceInfo.Name
+            ElseIf Not String.IsNullOrEmpty(deviceInfo.ProductName) Then
+                _nameLabel.Text = deviceInfo.ProductName
+            End If
+
+            ' Mettre à jour le statut online/offline
+            If deviceInfo.IsOnline Then
+                UpdateStatus("online")
+            Else
+                UpdateStatus("offline")
+            End If
+        End If
     End Sub
 
     Public Sub UpdateProperty(code As String, value As String)
