@@ -107,7 +107,7 @@ Public Class TuyaTokenProvider
             If Not expiresIn.HasValue OrElse expiresIn.Value = 0 Then
                 _expiryUtc = DateTime.UtcNow.AddHours(2)
             Else
-                _expiryUtc = DateTime.UtcNow.AddSeconds(expiresIn.Value)
+                _expiryUtc = DateTime.UtcNow.AddSeconds(expiresIn.Value) ' ✅ correction ici
             End If
 
             Console.WriteLine("✅ Token obtenu avec succès, expiration à " & _expiryUtc)
