@@ -15,13 +15,13 @@ Public Class TuyaHttpServer
             _listener.Start()
             _isRunning = True
 
-            Console.WriteLine("Serveur HTTP démarré sur http://localhost:5000/")
-
             ' Démarrer l'écoute en arrière-plan
             Task.Run(AddressOf ListenLoop)
 
         Catch ex As Exception
-            Console.WriteLine($"Erreur démarrage serveur HTTP : {ex.Message}")
+            Console.ForegroundColor = ConsoleColor.Red
+            Console.WriteLine($"  ✗ Erreur serveur HTTP : {ex.Message}")
+            Console.ResetColor()
         End Try
     End Sub
 
