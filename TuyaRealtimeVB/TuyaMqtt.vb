@@ -150,20 +150,43 @@ Public Class TuyaMqttClient
             Console.WriteLine($"📡 Topic source MQTT : {sourceTopic}")
             Console.WriteLine($"📡 Topic sink MQTT : {sinkTopic}")
 
-            ' 🔸 Abonnement legacy (v1)
-            Dim wildcardTopic = sinkTopic.Replace("{device_id}", "#")
-            Await _client.SubscribeAsync(wildcardTopic, MqttQualityOfServiceLevel.AtMostOnce)
-            Console.WriteLine($"📡 Abonné au topic global (legacy) : {wildcardTopic}")
-
-            ' 🔸 Abonnement TYLINK (v2.0)
-            Await _client.SubscribeAsync("tylink/#", MqttQualityOfServiceLevel.AtMostOnce)
-            Console.WriteLine("📡 Abonné aux topics TYLINK (v2.0) : tylink/#")
-
-            ' 🔸 Abonnement source topic
-            If Not String.IsNullOrEmpty(sourceTopic) Then
-                Await _client.SubscribeAsync(sourceTopic, MqttQualityOfServiceLevel.AtMostOnce)
-                Console.WriteLine($"📡 Abonné aussi à : {sourceTopic}")
+            ' 🔸 Abonnement au topic sink avec wildcard + (un seul niveau)
+            If Not String.IsNullOrEmpty(sinkTopic) Then
+                Dim wildcardSink = sinkTopic.Replace("{device_id}", "+")
+                Await _client.SubscribeAsync(wildcardSink, MqttQualityOfServiceLevel.AtLeastOnce)
+                Console.WriteLine($"📡 Abonné au topic sink (v1) : {wildcardSink}")
             End If
+
+            ' 🔸 Abonnement au topic source
+            If Not String.IsNullOrEmpty(sourceTopic) Then
+                Await _client.SubscribeAsync(sourceTopic, MqttQualityOfServiceLevel.AtLeastOnce)
+                Console.WriteLine($"📡 Abonné au topic source : {sourceTopic}")
+            End If
+
+            ' 🔸 Abonnement spécifique au switch pour test
+            Dim specificDeviceTopic = $"cloud/token/out/bf279a2131bf700244vfsa"
+            Await _client.SubscribeAsync(specificDeviceTopic, MqttQualityOfServiceLevel.AtLeastOnce)
+            Console.WriteLine($"📡 Abonné au topic spécifique du switch : {specificDeviceTopic}")
+
+
+            ' 🔸 Abonnement TYLINK (v2.0) - topics spécifiques
+            Await _client.SubscribeAsync("tylink/+/thing/property/report", MqttQualityOfServiceLevel.AtLeastOnce)
+            Console.WriteLine("📡 Abonné à : tylink/+/thing/property/report")
+
+            Await _client.SubscribeAsync("tylink/+/thing/property/set", MqttQualityOfServiceLevel.AtLeastOnce)
+            Console.WriteLine("📡 Abonné à : tylink/+/thing/property/set")
+
+            Await _client.SubscribeAsync("tylink/+/thing/event/trigger", MqttQualityOfServiceLevel.AtLeastOnce)
+            Console.WriteLine("📡 Abonné à : tylink/+/thing/event/trigger")
+
+            Await _client.SubscribeAsync("tylink/+/thing/action/execute", MqttQualityOfServiceLevel.AtLeastOnce)
+            Console.WriteLine("📡 Abonné à : tylink/+/thing/action/execute")
+
+            ' 🔸 Abonnement wildcard global pour tout capturer (debug)
+            Await _client.SubscribeAsync("#", MqttQualityOfServiceLevel.AtMostOnce)
+            Console.WriteLine("📡 Abonné au wildcard global : # (pour debug)")
+
+            Console.WriteLine("✅ Tous les abonnements MQTT sont actifs !")
 
         Catch ex As Exception
             Console.WriteLine("❌ Erreur abonnement MQTT : " & ex.Message)
