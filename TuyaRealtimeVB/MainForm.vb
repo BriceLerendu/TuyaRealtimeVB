@@ -14,6 +14,12 @@ Public Class MainForm
     Private _eventCountLabel As System.Windows.Forms.Label
     Private _eventCount As Integer = 0
 
+    ' ✅ NOUVEAU : Vue tableau (ajout minimal)
+    Private _tableView As RoomTableView
+    Private _currentView As String = "events" ' "events" ou "table"
+    Private _btnEvents As Button
+    Private _btnTable As Button
+
     Public Sub New()
         InitializeComponent()
         InitializeServices()
@@ -67,9 +73,30 @@ Public Class MainForm
         _eventCountLabel.Location = New Point(500, 50)
         topPanel.Controls.Add(_eventCountLabel)
 
+        ' ✅ NOUVEAU : Boutons pour basculer entre les vues (POSITIONS FIXES À GAUCHE POUR TEST)
+        _btnEvents = New Button()
+        _btnEvents.Text = "EVENEMENTS"
+        _btnEvents.Size = New Size(150, 40)
+        _btnEvents.Location = New Point(500, 30)
+        _btnEvents.BackColor = Color.Red
+        _btnEvents.ForeColor = Color.White
+        _btnEvents.Font = New Font("Arial", 12, FontStyle.Bold)
+        AddHandler _btnEvents.Click, Sub(s, e) SwitchToEventsView()
+        topPanel.Controls.Add(_btnEvents)
+
+        _btnTable = New Button()
+        _btnTable.Text = "TABLEAU"
+        _btnTable.Size = New Size(150, 40)
+        _btnTable.Location = New Point(670, 30)
+        _btnTable.BackColor = Color.Blue
+        _btnTable.ForeColor = Color.White
+        _btnTable.Font = New Font("Arial", 12, FontStyle.Bold)
+        AddHandler _btnTable.Click, Sub(s, e) SwitchToTableView()
+        topPanel.Controls.Add(_btnTable)
+
         Me.Controls.Add(topPanel)
 
-        ' ListView pour les événements
+        ' ListView pour les événements (vue actuelle)
         _listView = New ListView()
         _listView.Dock = DockStyle.Fill
         _listView.View = View.Details
@@ -87,6 +114,13 @@ Public Class MainForm
         _listView.Columns.Add("JSON", 200)
 
         Me.Controls.Add(_listView)
+
+        ' ✅ NOUVEAU : Vue tableau (cachée par défaut)
+        _tableView = New RoomTableView With {
+            .Dock = DockStyle.Fill,
+            .Visible = False
+        }
+        Me.Controls.Add(_tableView)
 
         ' Panel du bas (status bar)
         Dim bottomPanel As New Panel()
@@ -193,6 +227,28 @@ Public Class MainForm
         Catch ex As Exception
             UpdateStatus($"Erreur traitement: {ex.Message}", _statusLabel, Color.Red)
         End Try
+    End Sub
+
+    ' ✅ NOUVEAU : Basculer vers la vue événements
+    Private Sub SwitchToEventsView()
+        _currentView = "events"
+        _listView.Visible = True
+        _listView.BringToFront()
+        _tableView.Visible = False
+        _btnEvents.BackColor = Color.FromArgb(0, 122, 255)
+        _btnTable.BackColor = Color.FromArgb(142, 142, 147)
+        UpdateStatus("Vue Événements activée")
+    End Sub
+
+    ' ✅ NOUVEAU : Basculer vers la vue tableau
+    Private Sub SwitchToTableView()
+        _currentView = "table"
+        _tableView.Visible = True
+        _tableView.BringToFront()
+        _listView.Visible = False
+        _btnTable.BackColor = Color.FromArgb(0, 122, 255)
+        _btnEvents.BackColor = Color.FromArgb(142, 142, 147)
+        UpdateStatus("Vue Tableau activée")
     End Sub
 
     Private Sub UpdateStatus(message As String, Optional label As System.Windows.Forms.Label = Nothing, Optional color As Color = Nothing)
