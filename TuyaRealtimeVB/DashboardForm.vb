@@ -1342,17 +1342,52 @@ Public Class DashboardForm
         Try
             Using configForm As New CategoryConfigForm()
                 configForm.ShowDialog()
+
+                ' ✅ VÉRIFIER SI DES CHANGEMENTS ONT ÉTÉ SAUVEGARDÉS
+                If configForm.WasSaved Then
+                    LogDebug("=== RAFRAÎCHISSEMENT APRÈS MODIFICATION CONFIG ===")
+
+                    ' Recharger la configuration dans le manager
+                    TuyaCategoryManager.Instance.LoadConfiguration()
+                    LogDebug("Configuration rechargée dans le manager")
+
+                    ' Rafraîchir toutes les cartes d'appareils
+                    RefreshAllDeviceCards()
+
+                    LogDebug("=== RAFRAÎCHISSEMENT TERMINÉ ===")
+                    UpdateStatus("Configuration mise à jour - Toutes les cartes rafraîchies")
+                End If
             End Using
-
-            ' Recharger la configuration
-            TuyaCategoryManager.Instance.LoadConfiguration()
-
-            ' Optionnel : rafraîchir l'affichage
-            DisplayDevicesByRoom()
         Catch ex As Exception
-            LogDebug($"Erreur ouverture config catégories: {ex.Message}")
+            LogDebug(String.Format("Erreur ouverture config catégories: {0}", ex.Message))
         End Try
     End Sub
+
+    Private Sub RefreshAllDeviceCards()
+        Try
+            Dim cardCount As Integer = 0
+
+            SyncLock _lockObject
+                For Each kvp In _deviceCards.ToList()
+                    Dim card As DeviceCard = kvp.Value
+                    card.RefreshDisplay()
+                    cardCount += 1
+                Next
+            End SyncLock
+
+            LogDebug(String.Format("✓ {0} cartes d'appareils rafraîchies", cardCount))
+
+            ' Rafraîchir également la vue tableau si elle est active
+            If _currentView = ViewMode.Table AndAlso _tableView.Visible Then
+                LogDebug("Rafraîchissement de la vue tableau...")
+                SwitchToTableView(Nothing, Nothing)
+            End If
+
+        Catch ex As Exception
+            LogDebug(String.Format("Erreur RefreshAllDeviceCards: {0}", ex.Message))
+        End Try
+    End Sub
+
 #End Region
 
 #Region "Gestion de la console debug"

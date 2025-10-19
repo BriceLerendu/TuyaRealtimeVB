@@ -11,6 +11,14 @@ Public Class CategoryConfigForm
     Private _editorPanel As Panel
     Private _currentEditingNode As TreeNode
     Private _isDirty As Boolean = False
+    Private _wasSaved As Boolean = False  ' ✅ NOUVEAU
+
+    ' ✅ NOUVELLE PROPRIÉTÉ
+    Public ReadOnly Property WasSaved As Boolean
+        Get
+            Return _wasSaved
+        End Get
+    End Property
 
     Public Sub New()
         _categoryManager = TuyaCategoryManager.Instance
@@ -326,13 +334,50 @@ Public Class CategoryConfigForm
         AddHandler txtDisplayName.TextChanged, AddressOf PropertyField_Changed
         y += 70
 
-        ' Icon
+        ' Icon avec bouton de sélection
         AddLabel(_editorPanel, "Icône (emoji):", y)
+
+        Dim iconPanel = New Panel With {
+    .Location = New Point(20, y + 25),
+    .Size = New Size(_editorPanel.Width - 60, 35),
+    .BackColor = Color.Transparent
+}
+
         Dim iconToken = propData("icon")
         Dim iconValue As String = If(iconToken IsNot Nothing, iconToken.ToString(), "")
-        Dim txtIcon = AddTextBox(_editorPanel, iconValue, y + 25, False)
-        txtIcon.Tag = New With {.Field = "icon", .PropData = propData}
+        Dim txtIcon = New TextBox With {
+    .Text = iconValue,
+    .Location = New Point(0, 0),
+    .Size = New Size(iconPanel.Width - 110, 30),
+    .Font = New Font("Segoe UI", 10),
+    .Tag = New With {.Field = "icon", .PropData = propData}
+}
         AddHandler txtIcon.TextChanged, AddressOf PropertyField_Changed
+
+        Dim btnPickIcon = New Button With {
+    .Text = "🎨 Choisir",
+    .Location = New Point(iconPanel.Width - 100, 0),
+    .Size = New Size(100, 30),
+    .BackColor = Color.FromArgb(0, 122, 255),
+    .ForeColor = Color.White,
+    .FlatStyle = FlatStyle.Flat,
+    .Font = New Font("Segoe UI", 9, FontStyle.Bold),
+    .Cursor = Cursors.Hand,
+    .Tag = txtIcon
+}
+        btnPickIcon.FlatAppearance.BorderSize = 0
+
+        AddHandler btnPickIcon.Click, Sub(s, e)
+                                          Using iconPicker As New IconPickerForm(txtIcon.Text)
+                                              If iconPicker.ShowDialog() = DialogResult.OK Then
+                                                  txtIcon.Text = iconPicker.SelectedIcon
+                                              End If
+                                          End Using
+                                      End Sub
+
+        iconPanel.Controls.AddRange({txtIcon, btnPickIcon})
+        _editorPanel.Controls.Add(iconPanel)
+
         y += 70
 
         ' Conversion

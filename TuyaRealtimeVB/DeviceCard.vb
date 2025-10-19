@@ -7,13 +7,13 @@ Public Class DeviceCard
 
 #Region "Constantes"
     Private Const CARD_WIDTH As Integer = 320
-    Private Const CARD_HEIGHT As Integer = 260        ' ⬆️ Changé de 220 à 260
+    Private Const CARD_HEIGHT As Integer = 260
     Private Const CORNER_RADIUS As Integer = 20
     Private Const FOOTER_HEIGHT As Integer = 35
     Private Const PROPERTY_Y_START As Integer = 85
-    Private Const PROPERTY_Y_MAX As Integer = 210     ' ⬆️ Changé de 145 à 210
+    Private Const PROPERTY_Y_MAX As Integer = 210
     Private Const PROPERTY_HEIGHT As Integer = 26
-    Private Const MAX_PROPERTIES As Integer = 5       ' ⬆️ Changé de 3 à 5
+    Private Const MAX_PROPERTIES As Integer = 5
     Private Const FLASH_INTERVAL As Integer = 200
     Private Const SHADOW_LAYERS As Integer = 4
 
@@ -40,6 +40,7 @@ Public Class DeviceCard
     Private ReadOnly _lockObject As New Object()
     Private _lastUpdateTime As DateTime = DateTime.MinValue
     Private _apiClient As TuyaApiClient
+    Private ReadOnly _rawValues As New Dictionary(Of String, String)  ' ✅ NOUVEAU
 #End Region
 
 #Region "Champs privés - Contrôles UI"
@@ -322,7 +323,7 @@ Public Class DeviceCard
     Private Sub UpdateRoomName(deviceInfo As DeviceInfo)
         If Not String.IsNullOrEmpty(deviceInfo.RoomName) Then
             _roomName = deviceInfo.RoomName
-            _roomLabel.Text = $"📍 {_roomName}"
+            _roomLabel.Text = String.Format("📍 {0}", _roomName)
         End If
     End Sub
 
@@ -330,7 +331,7 @@ Public Class DeviceCard
         If Not String.IsNullOrEmpty(deviceInfo.Category) Then
             _category = deviceInfo.Category
             UpdateDeviceIconFromCategory(_category)
-            Debug.WriteLine($"📦 Appareil : {_deviceName} | Catégorie : {_category}")
+            Debug.WriteLine(String.Format("📦 Appareil : {0} | Catégorie : {1}", _deviceName, _category))
         Else
             DetectCategoryFromName()
         End If
@@ -339,7 +340,7 @@ Public Class DeviceCard
     Private Sub UpdateDeviceIconFromCategory(category As String)
         Dim deviceInfo = _deviceCategories.GetDeviceInfo(category)
         _iconLabel.Text = deviceInfo.icon
-        Debug.WriteLine($"🏷️ Type détecté : {deviceInfo.name} ({deviceInfo.icon})")
+        Debug.WriteLine(String.Format("🏷️ Type détecté : {0} ({1})", deviceInfo.name, deviceInfo.icon))
     End Sub
 
     Private Sub DetectCategoryFromName()
@@ -374,13 +375,16 @@ Public Class DeviceCard
 
         SyncLock _lockObject
             Try
+                ' ✅ Stocker la valeur brute
+                _rawValues(code) = value
+
                 If Not _properties.ContainsKey(code) Then
                     CreateNewProperty(code, value)
                 Else
                     UpdateExistingProperty(code, value)
                 End If
             Catch ex As Exception
-                Debug.WriteLine($"Erreur UpdateProperty: {ex.Message}")
+                Debug.WriteLine(String.Format("Erreur UpdateProperty: {0}", ex.Message))
             End Try
         End SyncLock
 
@@ -423,7 +427,7 @@ Public Class DeviceCard
             .Size = New Size(18, 20),
             .Font = New Font("Segoe UI Emoji", 9),
             .BackColor = Color.Transparent,
-            .Text = GetPropertyIcon(code),
+            .Text = GetPropertyIconFromConfig(code),
             .TextAlign = ContentAlignment.MiddleLeft
         }
         AddHandler icon.Click, AddressOf OnCardClick
@@ -431,11 +435,10 @@ Public Class DeviceCard
     End Function
 
     Private Function CreatePropertyNameLabel(code As String) As Label
-        ' ✅ UTILISER LE CATEGORY MANAGER
         Dim displayName = _categoryManager.GetDisplayName(_category, code)
 
         ' Extraire seulement le texte sans l'icône si présent
-        If displayName.Length > 2 AndAlso Char.IsWhiteSpace(displayName(1)) Then
+        If displayName.Length > 2 AndAlso Char.IsWhiteSpace(displayName.Chars(1)) Then
             displayName = displayName.Substring(2).Trim()
         End If
 
@@ -453,7 +456,6 @@ Public Class DeviceCard
     End Function
 
     Private Function CreatePropertyValueLabel(code As String, value As String) As Label
-        ' ✅ UTILISER LE CATEGORY MANAGER
         Dim formattedValue = _categoryManager.FormatValue(_category, code, value)
 
         Dim label = New Label With {
@@ -472,7 +474,6 @@ Public Class DeviceCard
     End Function
 
     Private Sub UpdateExistingProperty(code As String, value As String)
-        ' ✅ UTILISER LE CATEGORY MANAGER
         _properties(code).Text = _categoryManager.FormatValue(_category, code, value)
 
         ' Mettre à jour la couleur pour les switches
@@ -515,6 +516,96 @@ Public Class DeviceCard
             label.ForeColor = Color.FromArgb(28, 28, 30)
         End If
     End Sub
+#End Region
+
+#Region "Rafraîchissement de la configuration"
+    ' ✅ MÉTHODE pour rafraîchir l'affichage avec la nouvelle config
+    Public Sub RefreshDisplay()
+        If Me.InvokeRequired Then
+            Me.BeginInvoke(Sub() RefreshDisplay())
+            Return
+        End If
+
+        SyncLock _lockObject
+            Try
+                ' Rafraîchir toutes les propriétés avec leurs valeurs brutes stockées
+                For Each code As String In _rawValues.Keys.ToList()
+                    If _properties.ContainsKey(code) Then
+                        Dim rawValue As String = _rawValues(code)
+                        Dim valueLabel As Label = _properties(code)
+
+                        ' Reformater avec la nouvelle configuration
+                        valueLabel.Text = _categoryManager.FormatValue(_category, code, rawValue)
+
+                        ' Mettre à jour le panneau parent
+                        Dim parentPanel As Panel = TryCast(valueLabel.Parent, Panel)
+                        If parentPanel IsNot Nothing Then
+                            UpdatePropertyName(parentPanel, code)
+                            UpdatePropertyIcon(parentPanel, code)
+                        End If
+                    End If
+                Next
+
+                Debug.WriteLine(String.Format("✓ DeviceCard {0} rafraîchie", _deviceName))
+            Catch ex As Exception
+                Debug.WriteLine(String.Format("✗ Erreur RefreshDisplay: {0}", ex.Message))
+            End Try
+        End SyncLock
+    End Sub
+
+    Private Sub UpdatePropertyName(parentPanel As Panel, code As String)
+        For Each ctrl As Control In parentPanel.Controls
+            Dim nameLabel As Label = TryCast(ctrl, Label)
+            If nameLabel IsNot Nothing AndAlso nameLabel.Location.X = 22 Then
+                Dim displayName As String = _categoryManager.GetDisplayName(_category, code)
+
+                If displayName.Length > 2 AndAlso Char.IsWhiteSpace(displayName.Chars(1)) Then
+                    displayName = displayName.Substring(2).Trim()
+                End If
+
+                nameLabel.Text = displayName
+                Exit For
+            End If
+        Next
+    End Sub
+
+    Private Sub UpdatePropertyIcon(parentPanel As Panel, code As String)
+        For Each ctrl As Control In parentPanel.Controls
+            Dim iconLabel As Label = TryCast(ctrl, Label)
+            If iconLabel IsNot Nothing AndAlso iconLabel.Location.X = 0 Then
+                iconLabel.Text = GetPropertyIconFromConfig(code)
+                Exit For
+            End If
+        Next
+    End Sub
+
+    Private Function GetPropertyIconFromConfig(code As String) As String
+        Try
+            Dim config = _categoryManager.GetConfiguration()
+            If config IsNot Nothing AndAlso Not String.IsNullOrEmpty(_category) Then
+                Dim categoryConfig = config("categories")(_category)
+                If categoryConfig IsNot Nothing Then
+                    Dim properties = categoryConfig("properties")
+                    If properties IsNot Nothing Then
+                        Dim propConfig = properties(code)
+                        If propConfig IsNot Nothing Then
+                            Dim iconToken = propConfig("icon")
+                            If iconToken IsNot Nothing Then
+                                Dim iconValue As String = iconToken.ToString()
+                                If Not String.IsNullOrEmpty(iconValue) Then
+                                    Return iconValue
+                                End If
+                            End If
+                        End If
+                    End If
+                End If
+            End If
+        Catch ex As Exception
+            Debug.WriteLine(String.Format("Erreur GetPropertyIconFromConfig: {0}", ex.Message))
+        End Try
+
+        Return GetPropertyIcon(code)
+    End Function
 #End Region
 
 #Region "Gestion du statut"
@@ -567,7 +658,7 @@ Public Class DeviceCard
         End If
 
         _lastUpdateTime = DateTime.Now
-        _timestampLabel.Text = $"🕐 {_lastUpdateTime:HH:mm:ss}"
+        _timestampLabel.Text = String.Format("🕐 {0:HH:mm:ss}", _lastUpdateTime)
         _timestampLabel.ForeColor = Color.FromArgb(52, 199, 89)
         _timestampLabel.Location = New Point(_statusFooter.Width - _timestampLabel.Width - 15, 10)
     End Sub
@@ -648,7 +739,6 @@ Public Class DeviceCard
             .Font = New Font("Segoe UI", 10)
         }
 
-        ' Item Contrôler
         Dim controlItem = New ToolStripMenuItem("🎛️ Contrôler l'appareil") With {
             .ForeColor = Color.White
         }
@@ -657,7 +747,6 @@ Public Class DeviceCard
 
         menu.Items.Add(New ToolStripSeparator())
 
-        ' Item Renommer
         Dim renameItem = New ToolStripMenuItem("✏️ Renommer l'appareil") With {
             .ForeColor = Color.White
         }
@@ -689,7 +778,6 @@ Public Class DeviceCard
             If String.IsNullOrEmpty(newName) Then Return
             If newName = _deviceName Then Return
 
-            ' Feedback visuel pendant le renommage
             Dim originalBackColor = Me.BackColor
             Me.BackColor = Color.FromArgb(255, 250, 200)
             Me.Update()
@@ -701,7 +789,7 @@ Public Class DeviceCard
             If success Then
                 _deviceName = newName
                 _titleLabel.Text = newName
-                MessageBox.Show($"✅ Appareil renommé en '{newName}'", "Succès",
+                MessageBox.Show(String.Format("✅ Appareil renommé en '{0}'", newName), "Succès",
                               MessageBoxButtons.OK, MessageBoxIcon.Information)
             Else
                 MessageBox.Show("❌ Échec du renommage. Vérifiez les logs pour plus de détails.",
@@ -709,7 +797,7 @@ Public Class DeviceCard
             End If
 
         Catch ex As Exception
-            MessageBox.Show($"❌ Erreur : {ex.Message}", "Erreur",
+            MessageBox.Show(String.Format("❌ Erreur : {0}", ex.Message), "Erreur",
                           MessageBoxButtons.OK, MessageBoxIcon.Error)
         End Try
     End Sub
