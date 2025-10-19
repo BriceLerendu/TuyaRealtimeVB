@@ -15,7 +15,7 @@ Public Class NotificationSettingsForm
 
     Private Sub InitializeComponent()
         Me.Text = "Gestion des notifications"
-        Me.Size = New Size(900, 600)
+        Me.Size = New Size(1050, 600)
         Me.StartPosition = FormStartPosition.CenterParent
         Me.BackColor = Color.FromArgb(242, 242, 247)
         Me.FormBorderStyle = FormBorderStyle.Sizable

@@ -6,14 +6,16 @@ Public Class DeviceControlForm
 
     Private _deviceId As String
     Private _deviceName As String
+    Private _deviceCategory As String
     Private _apiClient As TuyaApiClient
     Private _currentProperties As Dictionary(Of String, String)
     Private _controlsPanel As FlowLayoutPanel
     Private _statusLabel As Label
 
-    Public Sub New(deviceId As String, deviceName As String, apiClient As TuyaApiClient, currentProperties As Dictionary(Of String, String))
+    Public Sub New(deviceId As String, deviceName As String, deviceCategory As String, apiClient As TuyaApiClient, currentProperties As Dictionary(Of String, String))
         _deviceId = deviceId
         _deviceName = deviceName
+        _deviceCategory = deviceCategory
         _apiClient = apiClient
         _currentProperties = currentProperties
 
@@ -569,33 +571,12 @@ Public Class DeviceControlForm
     End Function
 
     Private Function GetFriendlyName(code As String) As String
-        If code = "switch_1" Then Return "Interrupteur 1"
-        If code = "switch_2" Then Return "Interrupteur 2"
-        If code = "switch_3" Then Return "Interrupteur 3"
-        If code = "switch" Then Return "Interrupteur"
-        If code = "temp_set" Then Return "Température cible"
-        If code = "target_temp" Then Return "Consigne température"
-        If code.Contains("switch") Then Return code.Replace("switch_", "Interrupteur ")
-        Return code
+        Dim categoryManager = TuyaCategoryManager.Instance
+        Return categoryManager.GetDisplayName(_deviceCategory, code)
     End Function
 
     Private Function FormatValue(code As String, value As String) As String
-        If code.Contains("temperature") Then
-            Dim t As Double
-            If Double.TryParse(value, t) Then
-                Return $"{(t / 10.0):F1} °C"
-            End If
-            Return $"{value} °C"
-        ElseIf code.Contains("humidity") Then
-            Return $"{value} %"
-        ElseIf code.Contains("power") Then
-            Return $"{value} W"
-        ElseIf code.Contains("current") Then
-            Return $"{value} A"
-        ElseIf code.Contains("voltage") Then
-            Return $"{value} V"
-        Else
-            Return value
-        End If
+        Dim categoryManager = TuyaCategoryManager.Instance
+        Return categoryManager.FormatValue(_deviceCategory, code, value)
     End Function
 End Class
