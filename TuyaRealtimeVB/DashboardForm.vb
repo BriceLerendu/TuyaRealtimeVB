@@ -543,11 +543,15 @@ Public Class DashboardForm
         LogDebug("Serveur HTTP démarré")
     End Sub
 
-    Private Sub StartPythonBridge(scriptPath As String)
+    Private Async Sub StartPythonBridge(scriptPath As String)
         LogDebug($"Démarrage du pont Python : {scriptPath}")
         _pythonBridge = New PythonBridge(scriptPath)
-        _pythonBridge.Start()
-        LogDebug("Pont Python démarré")
+        Dim success = Await _pythonBridge.StartAsync()
+        If success Then
+            LogDebug("Pont Python démarré avec succès")
+        Else
+            LogDebug("Échec du démarrage du pont Python")
+        End If
     End Sub
 
     Private Sub StopServices()

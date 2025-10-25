@@ -171,7 +171,7 @@ Public Class MainForm
         Return lv
     End Function
 
-    Private Sub InitializeServices()
+    Private Async Sub InitializeServices()
         Try
             ' Démarrer le serveur HTTP
             _httpServer = New TuyaHttpServer()
@@ -181,8 +181,12 @@ Public Class MainForm
 
             ' Démarrer le client Pulsar
             _pythonBridge = New PythonBridge(PYTHON_SCRIPT_PATH)
-            _pythonBridge.Start()
-            SetStatus(_pythonStatusLabel, "● Client Pulsar: Connecté", Color.LimeGreen)
+            Dim success = Await _pythonBridge.StartAsync()
+            If success Then
+                SetStatus(_pythonStatusLabel, "● Client Pulsar: Connecté", Color.LimeGreen)
+            Else
+                SetStatus(_pythonStatusLabel, "● Client Pulsar: Erreur", Color.Red)
+            End If
 
             SetStatus(_statusLabel, "Système opérationnel - En attente d'événements")
 
