@@ -6,18 +6,19 @@ Imports Newtonsoft.Json.Linq
 Public Class TuyaConfig
     Public Property Region As String
     Public Property OpenApiBase As String
-    Public Property MqttHost As String
-    Public Property MqttPort As Integer
     Public Property AccessId As String
     Public Property AccessSecret As String
     Public Property Uid As String
 
-    ' Nouvelles propriétés pour Python
+    ' Propriï¿½tï¿½s pour Python Bridge
     Public Property PythonScriptPath As String
     Public Property PythonFallbackPath As String
 
-    ' Propriétés pour le logging
+    ' Propriï¿½tï¿½s pour le logging
     Public Property ShowRawPayloads As Boolean
+
+    ' Mode temps rï¿½el (Python Bridge ou SDK Officiel Tuya .NET)
+    Public Property RealtimeMode As RealtimeMode = RealtimeMode.DotNetPulsarOfficial ' DÃ©faut: SDK officiel
 
     Public Shared Function Load() As TuyaConfig
         Dim configPath As String = Path.Combine(Application.StartupPath, "appsettings.json")
@@ -35,8 +36,6 @@ Public Class TuyaConfig
         Dim tuya = obj("Tuya")
         config.Region = tuya("Region")?.ToString()
         config.OpenApiBase = tuya("OpenApiBase")?.ToString()
-        config.MqttHost = tuya("MqttHost")?.ToString()
-        config.MqttPort = CInt(tuya("MqttPort"))
         config.AccessId = tuya("AccessId")?.ToString()
         config.AccessSecret = tuya("AccessSecret")?.ToString()
         config.Uid = tuya("Uid")?.ToString()
@@ -60,6 +59,25 @@ Public Class TuyaConfig
             config.ShowRawPayloads = True
         End If
 
+        ' Configuration Realtime
+        Dim realtime = obj("Realtime")
+        If realtime IsNot Nothing Then
+            Dim modeValue = realtime("Mode")?.ToString()
+            If Not String.IsNullOrEmpty(modeValue) Then
+                ' Parser le mode (PythonBridge ou DotNetPulsarOfficial)
+                Select Case modeValue.ToLower()
+                    Case "pythonbridge", "python"
+                        config.RealtimeMode = RealtimeMode.PythonBridge
+                    Case "dotnetpulsarofficial", "tuyasdk", "official", "dotnetpulsar", "pulsar", "dotnet"
+                        config.RealtimeMode = RealtimeMode.DotNetPulsarOfficial
+                    Case Else
+                        config.RealtimeMode = RealtimeMode.DotNetPulsarOfficial ' DÃ©faut: SDK officiel
+                End Select
+            End If
+        Else
+            config.RealtimeMode = RealtimeMode.DotNetPulsarOfficial ' DÃ©faut: SDK officiel
+        End If
+
         Return config
     End Function
 
@@ -72,8 +90,6 @@ Public Class TuyaConfig
         obj("Tuya") = New JObject(
             New JProperty("Region", Region),
             New JProperty("OpenApiBase", OpenApiBase),
-            New JProperty("MqttHost", MqttHost),
-            New JProperty("MqttPort", MqttPort),
             New JProperty("AccessId", AccessId),
             New JProperty("AccessSecret", AccessSecret),
             New JProperty("Uid", Uid)
@@ -90,14 +106,20 @@ Public Class TuyaConfig
             New JProperty("ShowRawPayloads", ShowRawPayloads)
         )
 
+        ' Section Realtime
+        Dim modeString As String = If(RealtimeMode = RealtimeMode.PythonBridge, "PythonBridge", "DotNetPulsarOfficial")
+        obj("Realtime") = New JObject(
+            New JProperty("Mode", modeString)
+        )
+
         ' Sauvegarder avec indentation
         Dim json As String = obj.ToString(Formatting.Indented)
         File.WriteAllText(configPath, json)
     End Sub
 
-    ' Méthode pour obtenir le chemin du script Python
+    ' Mï¿½thode pour obtenir le chemin du script Python
     Public Function GetPythonScriptPath() As String
-        ' Essayer d'abord le chemin dans le répertoire de l'application
+        ' Essayer d'abord le chemin dans le rï¿½pertoire de l'application
         Dim appPath As String = Path.Combine(Application.StartupPath, PythonScriptPath)
         If File.Exists(appPath) Then
             Return appPath
@@ -113,7 +135,7 @@ Public Class TuyaConfig
             Return PythonFallbackPath
         End If
 
-        ' Aucun fichier trouvé
+        ' Aucun fichier trouvï¿½
         Return Nothing
     End Function
 End Class

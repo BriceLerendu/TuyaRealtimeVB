@@ -10,6 +10,7 @@
     <OptionInfer>On</OptionInfer>
     <OptionExplicit>On</OptionExplicit>
     <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>..\app_icon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <COMReference Include="{215d64d2-031c-33c7-96e3-61794cd1ee61}">
@@ -25,8 +26,11 @@
     </Content>
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <!-- DotPulsar pour .NET Pulsar natif -->
+    <PackageReference Include="DotPulsar" Version="3.3.1" />
+    <!-- ScottPlot pour graphiques et historiques -->
+    <PackageReference Include="ScottPlot.WinForms" Version="5.0.42" />
   </ItemGroup>
   <ItemGroup>
     <None Update="appsettings.json">

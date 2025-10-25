@@ -75,7 +75,15 @@ Public Class TuyaHttpServer
                 Dim context = Await _listener.GetContextAsync()
 
                 ' Traiter la requête de manière asynchrone sans bloquer la boucle
-                Dim handleTask = Task.Run(Sub() HandleRequest(context))
+                ' OPTIMISÉ : Capturer les exceptions des tasks fire-and-forget
+                Dim handleTask = Task.Run(
+                    Async Function()
+                        Try
+                            Await Task.Run(Sub() HandleRequest(context))
+                        Catch ex As Exception
+                            LogError("Erreur HandleRequest non gérée", ex)
+                        End Try
+                    End Function)
             Catch ex As HttpListenerException
                 ' Erreur normale lors de l'arrêt du serveur
                 If _isRunning Then
@@ -153,6 +161,14 @@ Public Class TuyaHttpServer
 
             Try
                 Dim json = JObject.Parse(body)
+
+                ' OPTIMISÉ : Validation du schéma JSON
+                If Not ValidateEventPayload(json) Then
+                    Log("Payload JSON invalide - schéma non conforme", ConsoleColor.Yellow)
+                    Log($"Body reçu: {body}", ConsoleColor.DarkYellow)
+                    Return Nothing
+                End If
+
                 Return json("event")?.ToString()
             Catch ex As Exception
                 LogError("Erreur parsing JSON", ex)
@@ -160,6 +176,30 @@ Public Class TuyaHttpServer
                 Return Nothing
             End Try
         End Using
+    End Function
+
+    ''' <summary>
+    ''' Valide le schéma du payload d'événement Tuya
+    ''' </summary>
+    Private Function ValidateEventPayload(json As JObject) As Boolean
+        ' Vérifier que le champ "event" existe
+        If json("event") Is Nothing Then
+            Return False
+        End If
+
+        Dim eventObj = TryCast(json("event"), JObject)
+        If eventObj Is Nothing Then
+            ' Si "event" n'est pas un objet, accepter quand même (peut être une string)
+            Return True
+        End If
+
+        ' Vérifier que devId existe dans l'événement
+        If eventObj("devId") Is Nothing Then
+            Log("⚠ Événement sans devId", ConsoleColor.Yellow)
+            Return False
+        End If
+
+        Return True
     End Function
 #End Region
 

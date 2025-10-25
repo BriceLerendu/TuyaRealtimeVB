@@ -429,6 +429,42 @@ Public Class DeviceControlForm
     End Sub
 
     Private Sub CreateTemperatureControl(code As String, currentValue As String)
+        ' Récupérer les specs pour extraire le scale et les limites
+        Dim specs = _apiClient.GetCachedDeviceSpecification(_deviceId)
+        Dim specItem As Newtonsoft.Json.Linq.JToken = Nothing
+        Dim scale As Integer = 0
+        Dim unit As String = "°C"
+        Dim minValue As Decimal = 15
+        Dim maxValue As Decimal = 30
+        Dim stepValue As Decimal = 1
+
+        If specs IsNot Nothing AndAlso specs("functions") IsNot Nothing Then
+            For Each func As Newtonsoft.Json.Linq.JToken In specs("functions")
+                If func("code")?.ToString() = code Then
+                    specItem = func
+                    Exit For
+                End If
+            Next
+        End If
+
+        If specItem IsNot Nothing Then
+            Dim valuesJson = specItem("values")?.ToString()
+            If Not String.IsNullOrEmpty(valuesJson) Then
+                Try
+                    Dim values = Newtonsoft.Json.Linq.JObject.Parse(valuesJson)
+                    scale = If(values("scale") IsNot Nothing, CInt(values("scale")), 0)
+                    unit = If(values("unit") IsNot Nothing, values("unit").ToString(), "°C")
+
+                    Dim scaleFactor = CDec(Math.Pow(10, scale))
+                    minValue = CDec(CInt(values("min")) / scaleFactor)
+                    maxValue = CDec(CInt(values("max")) / scaleFactor)
+                    stepValue = CDec(If(values("step") IsNot Nothing, CInt(values("step")), 1) / scaleFactor)
+                Catch ex As Exception
+                    ' Utiliser les valeurs par défaut
+                End Try
+            End If
+        End If
+
         Dim controlCard As New Panel With {
             .Width = _controlsPanel.ClientSize.Width - 40,
             .Height = 100,
@@ -461,29 +497,34 @@ Public Class DeviceControlForm
         }
         controlCard.Controls.Add(nameLabel)
 
-        Dim tempValue As Double
-        Double.TryParse(currentValue, tempValue)
+        ' Convertir la valeur actuelle en appliquant le scale
+        Dim rawValue As Decimal
+        Dim displayValue As Decimal = minValue
+        If Decimal.TryParse(currentValue, rawValue) Then
+            Dim scaleFactor = CDec(Math.Pow(10, scale))
+            displayValue = rawValue / scaleFactor
+        End If
 
         Dim valueLabel As New Label With {
-            .Text = $"{tempValue:F1}°C",
+            .Text = $"{displayValue.ToString($"F{scale}")}{unit}",
             .Font = New Font("Segoe UI", 10, FontStyle.Bold),
             .ForeColor = Color.FromArgb(255, 149, 0),
-            .Location = New Point(controlCard.Width - 80, 12),
+            .Location = New Point(controlCard.Width - 100, 12),
             .AutoSize = True
         }
         controlCard.Controls.Add(valueLabel)
 
         Dim slider As New TrackBar With {
-            .Minimum = 15,
-            .Maximum = 30,
-            .Value = CInt(tempValue),
-            .TickFrequency = 1,
+            .Minimum = CInt(minValue),
+            .Maximum = CInt(maxValue),
+            .Value = Math.Max(CInt(minValue), Math.Min(CInt(maxValue), CInt(displayValue))),
+            .TickFrequency = Math.Max(1, CInt(stepValue)),
             .Location = New Point(15, 45),
             .Width = controlCard.Width - 30
         }
 
         AddHandler slider.ValueChanged, Sub(s, e)
-                                            valueLabel.Text = $"{slider.Value}°C"
+                                            valueLabel.Text = $"{slider.Value.ToString($"F{scale}")}{unit}"
                                         End Sub
 
         AddHandler slider.MouseUp, Async Sub(s, e)
@@ -492,7 +533,11 @@ Public Class DeviceControlForm
                                        _statusLabel.ForeColor = Color.FromArgb(0, 122, 255)
 
                                        Try
-                                           Await SendCommandAsync(code, slider.Value.ToString())
+                                           ' Multiplier par le scale avant envoi
+                                           Dim scaleFactor = CDec(Math.Pow(10, scale))
+                                           Dim apiValue = CInt(slider.Value * scaleFactor)
+
+                                           Await SendCommandAsync(code, apiValue.ToString())
                                            _statusLabel.Text = "Température mise à jour"
                                            _statusLabel.ForeColor = Color.FromArgb(52, 199, 89)
                                        Catch ex As Exception
@@ -577,6 +622,6 @@ Public Class DeviceControlForm
 
     Private Function FormatValue(code As String, value As String) As String
         Dim categoryManager = TuyaCategoryManager.Instance
-        Return categoryManager.FormatValue(_deviceCategory, code, value)
+        Return categoryManager.FormatValueWithScale(_deviceCategory, _deviceId, code, value, _apiClient)
     End Function
 End Class

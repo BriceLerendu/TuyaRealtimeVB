@@ -13,6 +13,7 @@ Public Class TuyaApiClient
     Private Const HTTP_METHOD_GET As String = "GET"
     Private Const HTTP_METHOD_POST As String = "POST"
     Private Const HTTP_METHOD_PUT As String = "PUT"
+    Private Const MIN_API_INTERVAL_MS As Integer = 100  ' Rate limiting: 10 req/sec max
     Private Shared ReadOnly EPOCH_START As New DateTime(1970, 1, 1)
 #End Region
 
@@ -22,6 +23,16 @@ Public Class TuyaApiClient
     Private ReadOnly _roomsCache As New Dictionary(Of String, String)
     Private ReadOnly _homesCache As New Dictionary(Of String, String)
     Private ReadOnly _logCallback As Action(Of String)
+
+    ' Cache API avec expiration (optimisation rate limiting + TTL)
+    Private ReadOnly _statusCache As New Dictionary(Of String, (Data As JObject, Expiry As DateTime))
+    Private ReadOnly _deviceInfoCache As New Dictionary(Of String, (Data As DeviceInfo, Expiry As DateTime))
+    Private _lastApiCall As DateTime = DateTime.MinValue
+
+    ' Cache des spécifications par catégorie d'appareil (pour éviter les doublons)
+    Private ReadOnly _specificationsCacheByCategory As New Dictionary(Of String, JObject)
+    ' Mapping deviceId -> category pour récupération rapide
+    Private ReadOnly _deviceCategoryMap As New Dictionary(Of String, String)
 #End Region
 
 #Region "Initialisation"
@@ -131,6 +142,12 @@ Public Class TuyaApiClient
             End If
 
             Log($"=== Total: {allDevices.Count} appareils récupérés ===")
+
+            ' Charger les spécifications en parallèle
+            If allDevices.Count > 0 Then
+                Await LoadDevicesSpecificationsAsync(allDevices)
+            End If
+
         Catch ex As Exception
             LogError("GetAllDevicesAsync", ex)
         End Try
@@ -154,22 +171,56 @@ Public Class TuyaApiClient
     Private Async Function LoadDevicesForAllHomes(token As String) As Task(Of List(Of DeviceInfo))
         Dim allDevices As New List(Of DeviceInfo)
 
+        Log($"  Récupération parallèle des appareils pour {_homesCache.Count} logement(s)...")
+
+        ' Créer une tâche pour chaque home (parallélisation)
+        Dim tasks As New List(Of Task(Of List(Of DeviceInfo)))
+
         For Each homeEntry In _homesCache
             Dim homeId = homeEntry.Key
             Dim homeName = homeEntry.Value
 
-            Log($"  Récupération des appareils pour {homeName}...")
+            ' Créer une tâche asynchrone pour ce home
+            Dim task = LoadDevicesForHomeAsync(homeId, homeName, token)
+            tasks.Add(task)
+        Next
+
+        ' Attendre que TOUTES les tâches se terminent en parallèle
+        Dim results = Await Task.WhenAll(tasks)
+
+        ' Agréger tous les résultats
+        For Each deviceList In results
+            If deviceList IsNot Nothing Then
+                allDevices.AddRange(deviceList)
+            End If
+        Next
+
+        Log($"  ✅ Chargement parallèle terminé: {allDevices.Count} appareils récupérés")
+
+        Return allDevices
+    End Function
+
+    ''' <summary>
+    ''' Charge les devices d'un home spécifique (utilisé pour parallélisation)
+    ''' </summary>
+    Private Async Function LoadDevicesForHomeAsync(homeId As String, homeName As String, token As String) As Task(Of List(Of DeviceInfo))
+        Try
+            Log($"    🔄 [{homeName}] Récupération...")
 
             Dim url = BuildUrl(API_VERSION_HOMES, homeId, "/devices")
             Dim json = Await MakeApiCallAsync(url, token)
 
             If json("result") IsNot Nothing AndAlso TypeOf json("result") Is JArray Then
                 Dim devices = Await ProcessDevicesList(CType(json("result"), JArray), homeId, homeName, token)
-                allDevices.AddRange(devices)
+                Log($"    ✅ [{homeName}] {devices.Count} appareils")
+                Return devices
             End If
-        Next
 
-        Return allDevices
+            Return New List(Of DeviceInfo)
+        Catch ex As Exception
+            Log($"    ❌ [{homeName}] Erreur: {ex.Message}")
+            Return New List(Of DeviceInfo)
+        End Try
     End Function
 
     Private Async Function ProcessDevicesList(devicesList As JArray, homeId As String, homeName As String, token As String) As Task(Of List(Of DeviceInfo))
@@ -289,18 +340,89 @@ Public Class TuyaApiClient
         Return Tuple.Create(Of String, String)(Nothing, Nothing)
     End Function
 
-    Public Async Function GetDeviceStatusAsync(deviceId As String) As Task(Of JObject)
+    Public Async Function GetDeviceStatusAsync(deviceId As String, Optional useCache As Boolean = True) As Task(Of JObject)
         Try
+            ' Vérifier le cache si activé
+            If useCache AndAlso _statusCache.ContainsKey(deviceId) Then
+                Dim cached = _statusCache(deviceId)
+                If DateTime.Now < cached.Expiry Then
+                    Log($"Cache HIT pour {deviceId}")
+                    Return cached.Data
+                Else
+                    ' Cache expiré, le supprimer
+                    _statusCache.Remove(deviceId)
+                End If
+            End If
+
+            ' Rate limiting - attendre si nécessaire
+            Await ApplyRateLimitAsync()
+
+            ' Appel API
             Dim token = Await _tokenProvider.GetAccessTokenAsync()
             Dim url = BuildUrl(API_VERSION_DEVICES, deviceId, "/status")
             Dim json = Await MakeApiCallAsync(url, token)
 
-            If json("result") IsNot Nothing Then Return json
+            If json("result") IsNot Nothing Then
+                ' Stocker dans le cache avec expiration
+                _statusCache(deviceId) = (json, DateTime.Now.AddSeconds(30))
+                Return json
+            End If
         Catch ex As Exception
             Log($"Erreur GetDeviceStatus pour {deviceId}: {ex.Message}")
         End Try
 
         Return Nothing
+    End Function
+
+    ''' <summary>
+    ''' Récupère le status de plusieurs devices en une seule requête (batch)
+    ''' API Tuya: GET /v1.0/iot-03/devices/status?device_ids=id1,id2,id3
+    ''' Limite: Max 20 devices par requête
+    ''' </summary>
+    Public Async Function GetDeviceStatusBatchAsync(deviceIds As List(Of String)) As Task(Of Dictionary(Of String, JToken))
+        Dim results As New Dictionary(Of String, JToken)
+
+        Try
+            If deviceIds Is Nothing OrElse deviceIds.Count = 0 Then
+                Return results
+            End If
+
+            ' Limiter à 20 devices max (limite API Tuya)
+            Dim batchSize = Math.Min(deviceIds.Count, 20)
+            Dim deviceIdsToQuery = deviceIds.Take(batchSize).ToList()
+
+            Log($"🔄 Récupération batch de {deviceIdsToQuery.Count} status...")
+
+            ' Construire l'URL avec device_ids séparés par des virgules
+            Dim deviceIdsParam = String.Join(",", deviceIdsToQuery)
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            ' Construire l'URL avec query params (BuildUrl ne supporte pas les query params)
+            Dim baseUrl = $"{_cfg.OpenApiBase}/v1.0/iot-03/devices/status?device_ids={deviceIdsParam}"
+            Dim json = Await MakeApiCallAsync(baseUrl, token)
+
+            If json("result") IsNot Nothing AndAlso TypeOf json("result") Is JArray Then
+                Dim resultArray = CType(json("result"), JArray)
+
+                For Each deviceStatus As JToken In resultArray
+                    Dim deviceId = GetJsonString(deviceStatus, "id")
+                    Dim status = deviceStatus("status")
+
+                    If Not String.IsNullOrEmpty(deviceId) AndAlso status IsNot Nothing Then
+                        results(deviceId) = status
+                    End If
+                Next
+
+                Log($"✅ Batch status récupéré: {results.Count}/{deviceIdsToQuery.Count} devices")
+            Else
+                Log($"⚠️ Réponse batch vide ou invalide")
+            End If
+
+        Catch ex As Exception
+            Log($"❌ Erreur GetDeviceStatusBatch: {ex.Message}")
+        End Try
+
+        Return results
     End Function
 
     Public Async Function GetDeviceFullInfoAsync(deviceId As String) As Task(Of JObject)
@@ -317,6 +439,186 @@ Public Class TuyaApiClient
         End Try
 
         Return Nothing
+    End Function
+
+    ''' <summary>
+    ''' Récupère les spécifications d'un appareil par catégorie (functions, status) avec cache
+    ''' API: GET /v1.2/iot-03/devices/{device_id}/specification
+    ''' </summary>
+    Public Async Function GetDeviceSpecificationAsync(deviceId As String, category As String, Optional forceRefresh As Boolean = False) As Task(Of JObject)
+        Try
+            ' Vérifier le cache par catégorie (sauf si forceRefresh)
+            If Not forceRefresh AndAlso _specificationsCacheByCategory.ContainsKey(category) Then
+                Log($"✓ Spécifications pour catégorie '{category}' récupérées depuis le cache")
+                Return _specificationsCacheByCategory(category)
+            End If
+
+            ' Appel API si pas en cache
+            Log($"→ Récupération des spécifications pour catégorie '{category}' (device {deviceId}) depuis l'API")
+
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            ' Correct endpoint: /v1.2/iot-03/devices/{device_id}/specification
+            Dim url = $"{_cfg.OpenApiBase}/v1.2/iot-03/devices/{deviceId}/specification"
+
+            Log($"   URL: {url}")
+
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            ' Afficher un aperçu de la réponse
+            If json IsNot Nothing Then
+                Dim jsonStr = json.ToString()
+                Dim preview = If(jsonStr.Length > 200, jsonStr.Substring(0, 200), jsonStr)
+                Log($"   Réponse reçue: {preview}...")
+            Else
+                Log($"   Réponse reçue: NULL")
+            End If
+
+            If json IsNot Nothing AndAlso json("success") IsNot Nothing Then
+                Dim success = CBool(json("success"))
+                Log($"   success: {success}")
+
+                If Not success Then
+                    Log($"   ⚠️ API a retourné success=false: {json}")
+                End If
+            End If
+
+            If json("result") IsNot Nothing Then
+                Dim specs = CType(json("result"), JObject)
+
+                Dim functionsCount = If(specs("functions") IsNot Nothing, CType(specs("functions"), JArray).Count, 0)
+                Log($"   → {functionsCount} functions trouvées dans les specs")
+
+                ' Mettre en cache par catégorie
+                _specificationsCacheByCategory(category) = specs
+                Log($"✅ Spécifications pour catégorie '{category}' mises en cache")
+
+                Return specs
+            Else
+                Log($"   ⚠️ Pas de 'result' dans la réponse JSON")
+            End If
+
+            Return Nothing
+        Catch ex As Exception
+            Log($"❌ Erreur GetDeviceSpecificationAsync pour catégorie '{category}': {ex.Message}")
+            Log($"   Stack: {ex.StackTrace}")
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Retourne les spécifications depuis le cache uniquement (pas d'appel API)
+    ''' </summary>
+    Public Function GetCachedDeviceSpecification(deviceId As String) As JObject
+        ' Lookup category for this device
+        If _deviceCategoryMap.ContainsKey(deviceId) Then
+            Dim category = _deviceCategoryMap(deviceId)
+            If _specificationsCacheByCategory.ContainsKey(category) Then
+                Return _specificationsCacheByCategory(category)
+            End If
+        End If
+        Return Nothing
+    End Function
+
+    ''' <summary>
+    ''' Retourne la liste de toutes les catégories présentes dans le cache
+    ''' </summary>
+    Public Function GetCachedCategories() As List(Of String)
+        Return _specificationsCacheByCategory.Keys.ToList()
+    End Function
+
+    ''' <summary>
+    ''' Retourne les spécifications d'une catégorie depuis le cache (pas d'appel API)
+    ''' </summary>
+    Public Function GetCachedSpecificationByCategory(category As String) As JObject
+        If _specificationsCacheByCategory.ContainsKey(category) Then
+            Return _specificationsCacheByCategory(category)
+        End If
+        Return Nothing
+    End Function
+
+    ''' <summary>
+    ''' Effectue un appel GET générique à l'API Tuya
+    ''' </summary>
+    ''' <param name="endpoint">Endpoint de l'API (ex: /v1.0/devices/{id}/logs)</param>
+    ''' <returns>Réponse JSON de l'API</returns>
+    Public Async Function GetAsync(endpoint As String) As Task(Of JObject)
+        Try
+            ' Rate limiting - attendre si nécessaire
+            Await ApplyRateLimitAsync()
+
+            ' Obtenir le token
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            ' Construire l'URL complète
+            Dim url = _cfg.OpenApiBase & endpoint
+
+            ' Faire l'appel API
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            Return json
+        Catch ex As Exception
+            Log($"Erreur GetAsync pour {endpoint}: {ex.Message}")
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Charge les spécifications de tous les appareils en parallèle (groupées par catégorie)
+    ''' Optimisation: 1 seul appel API par catégorie au lieu de 1 par appareil
+    ''' </summary>
+    Private Async Function LoadDevicesSpecificationsAsync(devices As List(Of DeviceInfo)) As Task
+        Try
+            ' Grouper les appareils par catégorie
+            Dim devicesByCategory As New Dictionary(Of String, List(Of DeviceInfo))
+
+            For Each device In devices
+                If Not String.IsNullOrEmpty(device.Category) Then
+                    ' Enregistrer le mapping deviceId -> category
+                    _deviceCategoryMap(device.Id) = device.Category
+
+                    ' Grouper par catégorie
+                    If Not devicesByCategory.ContainsKey(device.Category) Then
+                        devicesByCategory(device.Category) = New List(Of DeviceInfo)
+                    End If
+                    devicesByCategory(device.Category).Add(device)
+                End If
+            Next
+
+            Log($"→ {devices.Count} appareils répartis en {devicesByCategory.Count} catégories")
+
+            ' Créer une tâche par catégorie non en cache
+            Dim specTasks As New List(Of Task(Of JObject))
+            Dim categoriesToLoad As New List(Of String)
+
+            For Each categoryEntry In devicesByCategory
+                Dim category = categoryEntry.Key
+                Dim devicesInCategory = categoryEntry.Value
+
+                ' Si la catégorie n'est pas déjà en cache
+                If Not _specificationsCacheByCategory.ContainsKey(category) Then
+                    ' Prendre le premier appareil de cette catégorie comme représentant
+                    Dim representativeDevice = devicesInCategory(0)
+                    specTasks.Add(GetDeviceSpecificationAsync(representativeDevice.Id, category))
+                    categoriesToLoad.Add(category)
+                    Log($"  → Catégorie '{category}': {devicesInCategory.Count} appareils (représentant: {representativeDevice.Name})")
+                Else
+                    Log($"  ✓ Catégorie '{category}': {devicesInCategory.Count} appareils (déjà en cache)")
+                End If
+            Next
+
+            ' Exécuter toutes les tâches en parallèle
+            If specTasks.Count > 0 Then
+                Log($"→ Chargement de {specTasks.Count} spécifications par catégorie en parallèle...")
+                Await Task.WhenAll(specTasks)
+                Log($"✅ {_specificationsCacheByCategory.Count} catégories en cache (au lieu de {devices.Count} appareils individuels)")
+                Log($"   Réduction: {devices.Count - _specificationsCacheByCategory.Count} appels API évités!")
+            Else
+                Log($"✓ Toutes les spécifications sont déjà en cache ({_specificationsCacheByCategory.Count} catégories)")
+            End If
+
+        Catch ex As Exception
+            LogError("LoadDevicesSpecificationsAsync", ex)
+        End Try
     End Function
 #End Region
 
@@ -441,7 +743,13 @@ Public Class TuyaApiClient
         Dim nonce = Guid.NewGuid().ToString("N")
         Dim path = New Uri(url).PathAndQuery
 
+        Log($"🔐 Signature Debug - URL: {url}")
+        Log($"🔐 Signature Debug - Path: {path}")
+        Log($"🔐 Signature Debug - Method: {httpMethod}, BodyHash: {bodyHash}")
+        Log($"🔐 Signature Debug - Timestamp: {t}, Nonce: {nonce}")
+
         Dim sign = CalculateSignature(httpMethod, bodyHash, path, token, t, nonce)
+        Log($"🔐 Signature Debug - Sign: {sign}")
 
         client.DefaultRequestHeaders.Add("client_id", _cfg.AccessId)
         client.DefaultRequestHeaders.Add("access_token", token)
@@ -508,6 +816,54 @@ Public Class TuyaApiClient
 #End Region
 
 #Region "Méthodes utilitaires"
+    ''' <summary>
+    ''' Applique le rate limiting pour éviter de surcharger l'API
+    ''' Limite à 10 requêtes/seconde (100ms minimum entre chaque appel)
+    ''' </summary>
+    Private Async Function ApplyRateLimitAsync() As Task
+        Dim elapsed = (DateTime.Now - _lastApiCall).TotalMilliseconds
+        If elapsed < MIN_API_INTERVAL_MS Then
+            Await Task.Delay(CInt(MIN_API_INTERVAL_MS - elapsed))
+        End If
+        _lastApiCall = DateTime.Now
+    End Function
+
+    ''' <summary>
+    ''' Nettoie le cache expiré
+    ''' </summary>
+    Public Sub ClearExpiredCache()
+        Dim now = DateTime.Now
+        Dim expiredKeys As New List(Of String)
+
+        ' Trouver les clés expirées dans statusCache
+        For Each kvp In _statusCache
+            If now >= kvp.Value.Expiry Then
+                expiredKeys.Add(kvp.Key)
+            End If
+        Next
+
+        For Each key In expiredKeys
+            _statusCache.Remove(key)
+        Next
+
+        expiredKeys.Clear()
+
+        ' Trouver les clés expirées dans deviceInfoCache
+        For Each kvp In _deviceInfoCache
+            If now >= kvp.Value.Expiry Then
+                expiredKeys.Add(kvp.Key)
+            End If
+        Next
+
+        For Each key In expiredKeys
+            _deviceInfoCache.Remove(key)
+        Next
+
+        If expiredKeys.Count > 0 Then
+            Log($"Cache nettoyé : {expiredKeys.Count} entrées expirées supprimées")
+        End If
+    End Sub
+
     Private Sub Log(message As String)
         If _logCallback IsNot Nothing Then
             _logCallback(message)
@@ -546,6 +902,744 @@ Public Class TuyaApiClient
             Dim hashBytes = sha256.ComputeHash(bytes)
             Return BitConverter.ToString(hashBytes).Replace("-", "").ToLower()
         End Using
+    End Function
+#End Region
+
+#Region "Gestion des Homes"
+    ''' <summary>
+    ''' Récupère la liste de tous les homes de l'utilisateur
+    ''' </summary>
+    Public Async Function GetHomesAsync() As Task(Of JArray)
+        Try
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = BuildUrl(API_VERSION_USERS, _cfg.Uid, "/homes")
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            If json("result") IsNot Nothing AndAlso TypeOf json("result") Is JArray Then
+                Return CType(json("result"), JArray)
+            End If
+
+            Return New JArray()
+        Catch ex As Exception
+            LogError("GetHomesAsync", ex)
+            Return New JArray()
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Crée un nouveau home
+    ''' </summary>
+    Public Async Function CreateHomeAsync(homeName As String) As Task(Of String)
+        Try
+            Log($"Création du home '{homeName}'")
+
+            Dim body = New Dictionary(Of String, Object) From {
+                {"name", homeName},
+                {"geo_name", homeName},
+                {"rooms", New List(Of String)}
+            }
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+
+            Dim url = BuildUrl(API_VERSION_USERS, _cfg.Uid, "/homes")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePostRequestAsync(url, jsonBody, token)
+            Dim jsonResponse = JObject.Parse(response)
+
+            If GetResponseSuccess(jsonResponse) Then
+                Dim homeId = GetJsonString(jsonResponse("result"), "home_id")
+                Log($"✅ Home créé avec succès, ID: {homeId}")
+
+                ' Mettre à jour le cache
+                If Not String.IsNullOrEmpty(homeId) Then
+                    _homesCache(homeId) = homeName
+                End If
+
+                Return homeId
+            Else
+                Dim errorMsg = If(GetJsonString(jsonResponse, "msg"), "Erreur inconnue")
+                Log($"❌ Échec création home: {errorMsg}")
+                Return Nothing
+            End If
+        Catch ex As Exception
+            LogError("CreateHomeAsync", ex)
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Renomme un home existant
+    ''' </summary>
+    Public Async Function RenameHomeAsync(homeId As String, newName As String) As Task(Of Boolean)
+        Try
+            Log($"Renommage du home {homeId} en '{newName}'")
+
+            Dim body = New Dictionary(Of String, Object) From {{"name", newName}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Home renommé avec succès")
+                _homesCache(homeId) = newName
+            Else
+                Log($"❌ Le renommage du home a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("RenameHomeAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Supprime un home
+    ''' </summary>
+    Public Async Function DeleteHomeAsync(homeId As String) As Task(Of Boolean)
+        Try
+            Log($"Suppression du home {homeId}")
+
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecuteDeleteRequestAsync(url, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Home supprimé avec succès")
+                _homesCache.Remove(homeId)
+            Else
+                Log($"❌ La suppression du home a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("DeleteHomeAsync", ex)
+            Return False
+        End Try
+    End Function
+#End Region
+
+#Region "Gestion des Rooms"
+    ''' <summary>
+    ''' Récupère toutes les rooms d'un home
+    ''' </summary>
+    Public Async Function GetRoomsAsync(homeId As String) As Task(Of JArray)
+        Try
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "/rooms")
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            If json("result") IsNot Nothing Then
+                Dim roomsList = json("result")("rooms")
+                If roomsList IsNot Nothing AndAlso TypeOf roomsList Is JArray Then
+                    Return CType(roomsList, JArray)
+                End If
+            End If
+
+            Return New JArray()
+        Catch ex As Exception
+            LogError("GetRoomsAsync", ex)
+            Return New JArray()
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Crée une nouvelle room dans un home
+    ''' </summary>
+    Public Async Function CreateRoomAsync(homeId As String, roomName As String) As Task(Of String)
+        Try
+            Log($"Création de la room '{roomName}' dans le home {homeId}")
+
+            Dim body = New Dictionary(Of String, Object) From {{"name", roomName}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+
+            ' CORRECTION: Utiliser /room (singulier) selon la doc Tuya
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "/room")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePostRequestAsync(url, jsonBody, token)
+            Dim jsonResponse = JObject.Parse(response)
+
+            If GetResponseSuccess(jsonResponse) Then
+                ' CORRECTION: result contient directement l'ID (pas result.room_id)
+                Dim roomId = jsonResponse("result")?.ToString()
+                Log($"✅ Room créée avec succès, ID: {roomId}")
+
+                ' Mettre à jour le cache
+                If Not String.IsNullOrEmpty(roomId) Then
+                    _roomsCache(roomId) = roomName
+                End If
+
+                Return roomId
+            Else
+                Dim errorMsg = If(GetJsonString(jsonResponse, "msg"), "Erreur inconnue")
+                Log($"❌ Échec création room: {errorMsg}")
+                Return Nothing
+            End If
+        Catch ex As Exception
+            LogError("CreateRoomAsync", ex)
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Renomme une room existante
+    ''' </summary>
+    Public Async Function RenameRoomAsync(homeId As String, roomId As String, newName As String) As Task(Of Boolean)
+        Try
+            Log($"Renommage de la room {roomId} en '{newName}'")
+
+            Dim body = New Dictionary(Of String, Object) From {{"name", newName}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, $"/rooms/{roomId}")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Room renommée avec succès")
+                _roomsCache(roomId) = newName
+            Else
+                Log($"❌ Le renommage de la room a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("RenameRoomAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Supprime une room
+    ''' </summary>
+    Public Async Function DeleteRoomAsync(homeId As String, roomId As String) As Task(Of Boolean)
+        Try
+            Log($"Suppression de la room {roomId}")
+
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, $"/rooms/{roomId}")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecuteDeleteRequestAsync(url, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Room supprimée avec succès")
+                _roomsCache.Remove(roomId)
+            Else
+                Log($"❌ La suppression de la room a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("DeleteRoomAsync", ex)
+            Return False
+        End Try
+    End Function
+#End Region
+
+#Region "Gestion des appareils - Administration"
+    ''' <summary>
+    ''' Déplace un appareil vers une room
+    ''' IMPORTANT: L'API Tuya REMPLACE la liste complète des devices (ne fait pas un simple "add")
+    ''' Il faut donc récupérer la liste actuelle et ajouter le device à déplacer
+    ''' API Tuya: PUT /v1.0/homes/{home_id}/rooms/{room_id}/devices
+    ''' </summary>
+    Public Async Function MoveDeviceToRoomAsync(homeId As String, deviceId As String, targetRoomId As String, Optional cachedDevices As List(Of DeviceInfo) = Nothing) As Task(Of Boolean)
+        Try
+            Log($"Déplacement de l'appareil {deviceId} vers la room {targetRoomId} (home {homeId})")
+
+            ' Récupérer la liste actuelle des devices dans la room cible
+            ' OPTIMISATION: Utiliser le cache si disponible pour éviter un appel API
+            Dim allDevices As List(Of DeviceInfo)
+            If cachedDevices IsNot Nothing Then
+                Log($"⚡ Utilisation du cache local ({cachedDevices.Count} devices) - PAS d'appel API")
+                allDevices = cachedDevices
+            Else
+                Log($"⚠️ Cache non disponible - Appel API GetAllDevicesAsync()")
+                allDevices = Await GetAllDevicesAsync()
+            End If
+
+            Dim currentRoomDeviceIds = allDevices _
+                .Where(Function(d) d.RoomId = targetRoomId AndAlso d.Id <> deviceId) _
+                .Select(Function(d) d.Id) _
+                .ToList()
+
+            ' Ajouter le device à déplacer
+            currentRoomDeviceIds.Add(deviceId)
+
+            Log($"📝 Envoi de la liste complète à la room {targetRoomId}: {currentRoomDeviceIds.Count} device(s) [{String.Join(", ", currentRoomDeviceIds)}]")
+
+            ' Construire le body avec la liste complète
+            Dim body = New Dictionary(Of String, Object) From {{"device_ids", currentRoomDeviceIds}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+
+            ' Utiliser PUT pour REMPLACER la liste complète
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, $"/rooms/{targetRoomId}/devices")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Appareil déplacé avec succès vers la room {targetRoomId}")
+            Else
+                Log($"❌ Le déplacement de l'appareil a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("MoveDeviceToRoomAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Retire un appareil d'une room (le met "sans pièce")
+    ''' IMPORTANT: Tuya n'a pas d'endpoint DELETE pour retirer un device d'une room.
+    ''' On utilise PUT avec la liste des devices SANS celui à retirer.
+    ''' </summary>
+    Public Async Function RemoveDeviceFromRoomAsync(homeId As String, roomId As String, deviceId As String, Optional cachedDevices As List(Of DeviceInfo) = Nothing) As Task(Of Boolean)
+        Try
+            Log($"Retrait de l'appareil {deviceId} de la room {roomId} (home {homeId})")
+
+            ' Récupérer la liste actuelle des devices dans la room
+            Dim allDevices As List(Of DeviceInfo)
+            If cachedDevices IsNot Nothing Then
+                Log($"⚡ Utilisation du cache local ({cachedDevices.Count} devices) - PAS d'appel API")
+                allDevices = cachedDevices
+            Else
+                Log($"⚠️ Cache non disponible - Appel API GetAllDevicesAsync()")
+                allDevices = Await GetAllDevicesAsync()
+            End If
+
+            ' Créer la liste des devices de la room SANS le device à retirer
+            Dim remainingDeviceIds = allDevices _
+                .Where(Function(d) d.RoomId = roomId AndAlso d.Id <> deviceId) _
+                .Select(Function(d) d.Id) _
+                .ToList()
+
+            Log($"📝 Envoi de la liste sans le device à retirer: {remainingDeviceIds.Count} device(s) restants [{String.Join(", ", remainingDeviceIds)}]")
+
+            ' Construire le body avec la liste sans le device
+            Dim body = New Dictionary(Of String, Object) From {{"device_ids", remainingDeviceIds}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+
+            ' Utiliser PUT pour REMPLACER la liste complète (sans le device)
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, $"/rooms/{roomId}/devices")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Appareil retiré de la room avec succès")
+            Else
+                Log($"❌ Le retrait de l'appareil a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("RemoveDeviceFromRoomAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Supprime un appareil
+    ''' </summary>
+    Public Async Function DeleteDeviceAsync(deviceId As String) As Task(Of Boolean)
+        Try
+            Log($"Suppression de l'appareil {deviceId}")
+
+            Dim url = BuildUrl(API_VERSION_DEVICES, deviceId, "")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecuteDeleteRequestAsync(url, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Appareil supprimé avec succès")
+            Else
+                Log($"❌ La suppression de l'appareil a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("DeleteDeviceAsync", ex)
+            Return False
+        End Try
+    End Function
+#End Region
+
+#Region "Requêtes HTTP - DELETE"
+    Private Async Function ExecuteDeleteRequestAsync(url As String, token As String) As Task(Of String)
+        Using client As New HttpClient()
+            Dim request = New HttpRequestMessage(HttpMethod.Delete, url)
+
+            ConfigureRequestHeaders(request, url, token, "DELETE", EMPTY_BODY_HASH)
+
+            Dim response = Await client.SendAsync(request)
+            Dim responseContent = Await response.Content.ReadAsStringAsync()
+
+            Log($"Réponse DELETE: {responseContent}")
+
+            If Not response.IsSuccessStatusCode Then
+                Log($"❌ Erreur API: {response.StatusCode} - {responseContent}")
+                Return responseContent
+            End If
+
+            Return responseContent
+        End Using
+    End Function
+#End Region
+
+#Region "Cache - Méthodes publiques"
+    ''' <summary>
+    ''' Retourne le cache des homes
+    ''' </summary>
+    Public Function GetHomesCache() As Dictionary(Of String, String)
+        Return New Dictionary(Of String, String)(_homesCache)
+    End Function
+
+    ''' <summary>
+    ''' Retourne le cache des rooms
+    ''' </summary>
+    Public Function GetRoomsCache() As Dictionary(Of String, String)
+        Return New Dictionary(Of String, String)(_roomsCache)
+    End Function
+#End Region
+
+    ''' <summary>
+    ''' Récupère tous les appareils d'un home spécifique avec leurs spécifications en cache
+    ''' API: GET /v1.0/homes/{home_id}/devices
+    ''' </summary>
+    Public Async Function GetDevicesByHomeAsync(homeId As String) As Task(Of JArray)
+        Try
+            Log($"Récupération des appareils du home {homeId}")
+
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "/devices")
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            If json("result") IsNot Nothing AndAlso TypeOf json("result") Is JArray Then
+                Dim devices = CType(json("result"), JArray)
+
+                ' Enrichir chaque device avec ses spécifications depuis le cache
+                For Each device As JToken In devices
+                    Dim deviceId = GetJsonString(device, "id")
+                    If Not String.IsNullOrEmpty(deviceId) Then
+                        Dim specs = GetCachedDeviceSpecification(deviceId)
+                        If specs IsNot Nothing Then
+                            ' Ajouter les specs directement dans l'objet device
+                            CType(device, JObject)("_cached_specifications") = specs
+                        End If
+                    End If
+                Next
+
+                Log($"✅ {devices.Count} appareil(s) récupéré(s) avec spécifications")
+                Return devices
+            End If
+
+            Log($"⚠️ Aucun appareil trouvé pour le home {homeId}")
+            Return New JArray()
+        Catch ex As Exception
+            LogError("GetDevicesByHomeAsync", ex)
+            Return New JArray()
+        End Try
+    End Function
+
+#Region "Gestion des Automatisations (Scene Automation)"
+    ''' <summary>
+    ''' Récupère toutes les automatisations (scenes + automations) d'un home
+    ''' Essaie plusieurs endpoints API selon la disponibilité
+    ''' </summary>
+    Public Async Function GetAutomationsAsync(homeId As String) As Task(Of JArray)
+        Try
+            Log($"╔════════════════════════════════════════════════════")
+            Log($"║ AUTOMATISATIONS - HOME ID: {homeId}")
+            Log($"╚════════════════════════════════════════════════════")
+
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim allAutomations As New JArray()
+
+            ' Essai 1: /v1.0/homes/{home_id}/automations (endpoint principal pour les automatisations)
+            Dim url1 = BuildUrl(API_VERSION_HOMES, homeId, "/automations")
+            Log($"📡 Endpoint 1 (automations): {url1}")
+
+            Dim json1 = Await MakeApiCallAsync(url1, token)
+            Log($"📥 RÉPONSE /automations:")
+            Log(json1.ToString(Newtonsoft.Json.Formatting.Indented))
+
+            Dim success1 = GetJsonBool(json1, "success")
+            Log($"✓ success = {success1}")
+
+            If success1 AndAlso json1("result") IsNot Nothing AndAlso TypeOf json1("result") Is JArray Then
+                Dim automations1 = CType(json1("result"), JArray)
+                Log($"✅ /automations: {automations1.Count} élément(s)")
+
+                ' Ajouter ces automatisations
+                For Each auto As JToken In automations1
+                    allAutomations.Add(auto)
+                Next
+            Else
+                Dim code1 = GetJsonString(json1, "code")
+                Dim msg1 = GetJsonString(json1, "msg")
+                If Not String.IsNullOrEmpty(code1) Then
+                    Log($"⚠️ /automations code = {code1}, msg = {msg1}")
+                End If
+            End If
+
+            ' Essai 2: /v1.1/homes/{home_id}/scenes (endpoint pour les scènes tap-to-run)
+            Dim url2 = BuildUrl("/v1.1/homes/", homeId, "/scenes")
+            Log($"")
+            Log($"📡 Endpoint 2 (scenes): {url2}")
+
+            Dim json2 = Await MakeApiCallAsync(url2, token)
+            Log($"📥 RÉPONSE /scenes:")
+            Log(json2.ToString(Newtonsoft.Json.Formatting.Indented))
+
+            Dim success2 = GetJsonBool(json2, "success")
+            Log($"✓ success = {success2}")
+
+            If success2 AndAlso json2("result") IsNot Nothing AndAlso TypeOf json2("result") Is JArray Then
+                Dim scenes2 = CType(json2("result"), JArray)
+                Log($"✅ /scenes: {scenes2.Count} élément(s)")
+
+                ' Ajouter ces scènes (en évitant les doublons par scene_id ou automation_id)
+                Dim existingIds As New HashSet(Of String)
+                For Each existing As JToken In allAutomations
+                    ' Les automatisations peuvent avoir automation_id ou scene_id
+                    Dim existingId = GetJsonString(existing, "automation_id")
+                    If String.IsNullOrEmpty(existingId) Then
+                        existingId = GetJsonString(existing, "scene_id")
+                    End If
+                    If Not String.IsNullOrEmpty(existingId) Then
+                        existingIds.Add(existingId)
+                    End If
+                Next
+
+                For Each scene As JToken In scenes2
+                    Dim sceneId = GetJsonString(scene, "scene_id")
+                    If Not String.IsNullOrEmpty(sceneId) AndAlso Not existingIds.Contains(sceneId) Then
+                        allAutomations.Add(scene)
+                    End If
+                Next
+            Else
+                Dim code2 = GetJsonString(json2, "code")
+                Dim msg2 = GetJsonString(json2, "msg")
+                If Not String.IsNullOrEmpty(code2) Then
+                    Log($"⚠️ /scenes code = {code2}, msg = {msg2}")
+                End If
+            End If
+
+            Log($"")
+            Log($"🎯 TOTAL COMBINÉ: {allAutomations.Count} automatisation(s)")
+            Log($"════════════════════════════════════════════════════")
+
+            Return allAutomations
+        Catch ex As Exception
+            LogError("GetAutomationsAsync", ex)
+            Log($"════════════════════════════════════════════════════")
+            Return New JArray()
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Récupère les détails d'une automatisation spécifique
+    ''' API: GET /v1.0/homes/{home_id}/automations/{automation_id}
+    ''' </summary>
+    Public Async Function GetAutomationDetailsAsync(homeId As String, automationId As String) As Task(Of JObject)
+        Try
+            Log($"Récupération des détails de l'automatisation {automationId}")
+
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, $"/automations/{automationId}")
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            If json("result") IsNot Nothing AndAlso TypeOf json("result") Is JObject Then
+                Log($"✅ Détails de l'automatisation récupérés")
+                Return CType(json("result"), JObject)
+            End If
+
+            Log($"⚠️ Détails non disponibles pour l'automatisation {automationId}")
+            Return Nothing
+        Catch ex As Exception
+            LogError("GetAutomationDetailsAsync", ex)
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Active une automatisation
+    ''' API: PUT /v1.0/homes/{home_id}/automations/{automation_id}/actions/enable
+    ''' </summary>
+    Public Async Function EnableAutomationAsync(homeId As String, automationId As String) As Task(Of Boolean)
+        Try
+            Log($"Activation de l'automatisation {automationId}")
+
+            ' Corps vide pour l'activation (l'API ne nécessite pas de body)
+            Dim jsonBody = "{}"
+
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, $"/automations/{automationId}/actions/enable")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Automatisation activée avec succès")
+            Else
+                Log($"❌ L'activation de l'automatisation a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("EnableAutomationAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Désactive une automatisation
+    ''' API: PUT /v1.0/homes/{home_id}/automations/{automation_id}/actions/disable
+    ''' </summary>
+    Public Async Function DisableAutomationAsync(homeId As String, automationId As String) As Task(Of Boolean)
+        Try
+            Log($"Désactivation de l'automatisation {automationId}")
+
+            ' Corps vide pour la désactivation
+            Dim jsonBody = "{}"
+
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, $"/automations/{automationId}/actions/disable")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Automatisation désactivée avec succès")
+            Else
+                Log($"❌ La désactivation de l'automatisation a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("DisableAutomationAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Supprime une automatisation
+    ''' API: DELETE /v1.0/homes/{home_id}/automations/{automation_id}
+    ''' </summary>
+    Public Async Function DeleteAutomationAsync(homeId As String, automationId As String) As Task(Of Boolean)
+        Try
+            Log($"Suppression de l'automatisation {automationId}")
+
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, $"/automations/{automationId}")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecuteDeleteRequestAsync(url, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Automatisation supprimée avec succès")
+            Else
+                Log($"❌ La suppression de l'automatisation a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("DeleteAutomationAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Crée une nouvelle automatisation
+    ''' API: POST /v1.0/homes/{home_id}/automations
+    ''' </summary>
+    ''' <param name="homeId">ID du home</param>
+    ''' <param name="automationData">Données de l'automatisation (name, conditions, actions, etc.)</param>
+    Public Async Function CreateAutomationAsync(homeId As String, automationData As JObject) As Task(Of String)
+        Try
+            Log($"Création d'une nouvelle automatisation dans le home {homeId}")
+            Log($"Données: {automationData.ToString(Newtonsoft.Json.Formatting.Indented)}")
+
+            Dim jsonBody = automationData.ToString(Newtonsoft.Json.Formatting.None)
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "/automations")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePostRequestAsync(url, jsonBody, token)
+            Dim json = JObject.Parse(response)
+
+            Dim success = GetJsonBool(json, "success")
+            If success AndAlso json("result") IsNot Nothing Then
+                ' L'API retourne l'ID de l'automatisation créée
+                Dim automationId As String = Nothing
+                If TypeOf json("result") Is JObject Then
+                    automationId = GetJsonString(CType(json("result"), JObject), "automation_id")
+                    If String.IsNullOrEmpty(automationId) Then
+                        automationId = GetJsonString(CType(json("result"), JObject), "scene_id")
+                    End If
+                ElseIf TypeOf json("result") Is JValue Then
+                    automationId = json("result").ToString()
+                End If
+
+                Log($"✅ Automatisation créée avec succès (ID: {automationId})")
+                Return automationId
+            Else
+                Dim code = GetJsonString(json, "code")
+                Dim msg = GetJsonString(json, "msg")
+                Log($"❌ Échec de la création: code={code}, msg={msg}")
+                Return Nothing
+            End If
+        Catch ex As Exception
+            LogError("CreateAutomationAsync", ex)
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Met à jour une automatisation existante
+    ''' API: PUT /v1.0/homes/{home_id}/automations/{automation_id}
+    ''' </summary>
+    ''' <param name="homeId">ID du home</param>
+    ''' <param name="automationId">ID de l'automatisation</param>
+    ''' <param name="automationData">Nouvelles données de l'automatisation</param>
+    Public Async Function UpdateAutomationAsync(homeId As String, automationId As String, automationData As JObject) As Task(Of Boolean)
+        Try
+            Log($"Mise à jour de l'automatisation {automationId}")
+            Log($"Données: {automationData.ToString(Newtonsoft.Json.Formatting.Indented)}")
+
+            Dim jsonBody = automationData.ToString(Newtonsoft.Json.Formatting.None)
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, $"/automations/{automationId}")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Automatisation mise à jour avec succès")
+            Else
+                Log($"❌ La mise à jour de l'automatisation a échoué")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("UpdateAutomationAsync", ex)
+            Return False
+        End Try
     End Function
 #End Region
 

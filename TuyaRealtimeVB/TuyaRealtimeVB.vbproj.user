@@ -1,0 +1,50 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <_LastSelectedProfileId>C:\Users\leren\ABE Conseil V3\Ventes\~Docs logements\Docs boitier WIFI\Projet Dashboard Tuya\TuyaRealtimeVB\TuyaRealtimeVB\My Project\PublishProfiles\FolderProfile1.pubxml</_LastSelectedProfileId>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Update="AutomationEditorForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="AutomationForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="DashboardForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="DeviceCard.vb">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Update="DeviceControlForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="DisplayPreferencesForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="HistoryForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="HomeAdminForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="MainForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="NotificationRuleEditor.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="NotificationSettingsForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="NotificationsPopup.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="RoomTableView.vb">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Update="SettingsForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+  </ItemGroup>
+</Project>
