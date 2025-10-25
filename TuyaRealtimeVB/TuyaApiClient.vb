@@ -376,6 +376,23 @@ Public Class TuyaApiClient
             Return False
         End Try
     End Function
+
+    ''' <summary>
+    ''' Exécute une requête GET personnalisée vers l'API Tuya
+    ''' </summary>
+    ''' <param name="endpoint">Endpoint complet avec query params (ex: "/v1.0/devices/123/statistics/days?code=cur_power")</param>
+    ''' <returns>Réponse JSON de l'API</returns>
+    Public Async Function ExecuteGetRequestAsync(endpoint As String) As Task(Of JObject)
+        Try
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = _cfg.OpenApiBase & endpoint
+            Dim json = Await MakeApiCallAsync(url, token)
+            Return json
+        Catch ex As Exception
+            LogError("ExecuteGetRequestAsync", ex)
+            Return Nothing
+        End Try
+    End Function
 #End Region
 
 #Region "Requêtes HTTP"

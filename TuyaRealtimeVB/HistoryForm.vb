@@ -402,10 +402,10 @@ Public Class HistoryForm
         Next
 
         ' Ligne en escalier
-        Dim step = _statsChart.Plot.Add.ScatterLine(positions.ToArray(), values.ToArray())
-        step.LineWidth = 3
-        step.Color = ScottPlot.Color.FromHex("#34C759") ' Vert
-        step.MarkerSize = 0
+        Dim stepLine = _statsChart.Plot.Add.ScatterLine(positions.ToArray(), values.ToArray())
+        stepLine.LineWidth = 3
+        stepLine.Color = ScottPlot.Color.FromHex("#34C759") ' Vert
+        stepLine.MarkerSize = 0
 
         ' Remplissage sous la courbe pour les états ON
         Dim fill = _statsChart.Plot.Add.Fill(positions.ToArray(), values.ToArray())

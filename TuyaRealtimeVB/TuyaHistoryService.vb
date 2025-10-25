@@ -55,7 +55,7 @@ Public Class TuyaHistoryService
             Log($"Récupération statistiques: {deviceId}, code: {code}, période: {period}")
 
             ' Appel API
-            Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
+            Dim response = Await _apiClient.ExecuteGetRequestAsync(endpoint & queryParams)
 
             If response IsNot Nothing AndAlso response("success")?.ToObject(Of Boolean)() = True Then
                 Dim result = response("result")
@@ -205,7 +205,7 @@ Public Class TuyaHistoryService
             Log($"Récupération logs: {deviceId}, période: {period}")
 
             ' Appel API
-            Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
+            Dim response = Await _apiClient.ExecuteGetRequestAsync(endpoint & queryParams)
 
             Dim logs As New List(Of DeviceLog)
 
