@@ -407,10 +407,8 @@ Public Class HistoryForm
         stepLine.Color = ScottPlot.Color.FromHex("#34C759") ' Vert
         stepLine.MarkerSize = 0
 
-        ' Remplissage sous la courbe pour les états ON
-        Dim fill = _statsChart.Plot.Add.Fill(positions.ToArray(), values.ToArray())
-        fill.FillColor = ScottPlot.Color.FromHex("#34C759").WithAlpha(0.3)
-        fill.LineColor = ScottPlot.Colors.Transparent
+        ' Note: Le remplissage sous la courbe n'est pas disponible dans ScottPlot 5.x avec Add.Fill()
+        ' La ligne en escalier verte est suffisante pour visualiser les états ON/OFF
 
         ' Configuration axe X
         Dim labels = stats.DataPoints.Select(Function(p) p.Label).ToArray()
