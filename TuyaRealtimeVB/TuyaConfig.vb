@@ -12,11 +12,14 @@ Public Class TuyaConfig
     Public Property AccessSecret As String
     Public Property Uid As String
 
-    ' Nouvelles propriétés pour Python
+    ' Nouvelles propriï¿½tï¿½s pour Python
     Public Property PythonScriptPath As String
     Public Property PythonFallbackPath As String
 
-    ' Propriétés pour le logging
+    ' Mode temps rÃ©el : "Python" ou "Pulsar"
+    Public Property RealtimeMode As String
+
+    ' Propriï¿½tï¿½s pour le logging
     Public Property ShowRawPayloads As Boolean
 
     Public Shared Function Load() As TuyaConfig
@@ -50,6 +53,9 @@ Public Class TuyaConfig
             config.PythonScriptPath = "tuya_bridge.py"
             config.PythonFallbackPath = ""
         End If
+
+        ' Mode temps rÃ©el (Python par dÃ©faut pour compatibilitÃ©)
+        config.RealtimeMode = If(obj("RealtimeMode")?.ToString(), "Python")
 
         ' Configuration Logging
         Dim logging = obj("Logging")
@@ -85,6 +91,9 @@ Public Class TuyaConfig
             New JProperty("FallbackPath", PythonFallbackPath)
         )
 
+        ' Mode temps rÃ©el
+        obj("RealtimeMode") = RealtimeMode
+
         ' Section Logging
         obj("Logging") = New JObject(
             New JProperty("ShowRawPayloads", ShowRawPayloads)
@@ -95,9 +104,9 @@ Public Class TuyaConfig
         File.WriteAllText(configPath, json)
     End Sub
 
-    ' Méthode pour obtenir le chemin du script Python
+    ' Mï¿½thode pour obtenir le chemin du script Python
     Public Function GetPythonScriptPath() As String
-        ' Essayer d'abord le chemin dans le répertoire de l'application
+        ' Essayer d'abord le chemin dans le rï¿½pertoire de l'application
         Dim appPath As String = Path.Combine(Application.StartupPath, PythonScriptPath)
         If File.Exists(appPath) Then
             Return appPath
@@ -113,7 +122,7 @@ Public Class TuyaConfig
             Return PythonFallbackPath
         End If
 
-        ' Aucun fichier trouvé
+        ' Aucun fichier trouvï¿½
         Return Nothing
     End Function
 End Class

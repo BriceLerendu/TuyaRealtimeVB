@@ -79,6 +79,18 @@ Public Class DeviceCard
             Return _deviceName
         End Get
     End Property
+
+    Public ReadOnly Property Category As String
+        Get
+            Return _category
+        End Get
+    End Property
+
+    Public Function GetAllKnownPropertyCodes() As List(Of String)
+        SyncLock _lockObject
+            Return _propertyCodes.Values.ToList()
+        End SyncLock
+    End Function
 #End Region
 
 #Region "Initialisation"

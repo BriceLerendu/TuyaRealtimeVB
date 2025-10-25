@@ -10,6 +10,8 @@ Public Class SettingsForm
     ' Contrôles Tuya
     Private _regionTextBox As TextBox
     Private _openApiBaseTextBox As TextBox
+    Private _mqttHostTextBox As TextBox
+    Private _mqttPortTextBox As NumericUpDown
     Private _accessIdTextBox As TextBox
     Private _accessSecretTextBox As TextBox
     Private _uidTextBox As TextBox
@@ -22,10 +24,6 @@ Public Class SettingsForm
 
     ' Contrôles Logging
     Private _showRawPayloadsCheckBox As CheckBox
-
-    ' Contrôles Mode Temps Réel
-    Private _realtimeModePythonRadio As RadioButton
-    Private _realtimeModeDotNetOfficialRadio As RadioButton
 
     ' Boutons
     Private _saveButton As Button
@@ -40,7 +38,7 @@ Public Class SettingsForm
 
     Private Sub InitializeComponent()
         Me.Text = "Paramètres de l'application"
-        Me.Size = New Size(600, 760)
+        Me.Size = New Size(600, 700)
         Me.StartPosition = FormStartPosition.CenterParent
         Me.FormBorderStyle = FormBorderStyle.FixedDialog
         Me.MaximizeBox = False
@@ -62,6 +60,30 @@ Public Class SettingsForm
 
         yPos = AddTextBoxField(scrollPanel, "Région :", _regionTextBox, yPos, "eu, us, cn, in")
         yPos = AddTextBoxField(scrollPanel, "OpenAPI Base :", _openApiBaseTextBox, yPos, "https://openapi.tuyaeu.com")
+        yPos = AddTextBoxField(scrollPanel, "MQTT Host :", _mqttHostTextBox, yPos, "mqe.tuyaeu.com")
+
+        ' Port MQTT (NumericUpDown)
+        Dim portLabel As New Label With {
+            .Text = "MQTT Port :",
+            .Location = New Point(20, yPos),
+            .Size = New Size(150, 20),
+            .Font = New Font("Segoe UI", 9, FontStyle.Bold),
+            .ForeColor = Color.FromArgb(28, 28, 30),
+            .BackColor = Color.Transparent
+        }
+        scrollPanel.Controls.Add(portLabel)
+
+        _mqttPortTextBox = New NumericUpDown With {
+            .Location = New Point(180, yPos),
+            .Size = New Size(380, 25),
+            .Font = New Font("Segoe UI", 10),
+            .Minimum = 1,
+            .Maximum = 65535,
+            .Value = 8285
+        }
+        scrollPanel.Controls.Add(_mqttPortTextBox)
+        yPos += 35
+
         yPos = AddTextBoxField(scrollPanel, "Access ID :", _accessIdTextBox, yPos)
         yPos = AddPasswordField(scrollPanel, "Access Secret :", _accessSecretTextBox, yPos)
         yPos = AddTextBoxField(scrollPanel, "UID :", _uidTextBox, yPos)
@@ -155,44 +177,6 @@ Public Class SettingsForm
         }
         scrollPanel.Controls.Add(_showRawPayloadsCheckBox)
         yPos += 45
-
-        ' ═══════════════════════════════════════════════════════
-        ' SECTION MODE TEMPS RÉEL
-        ' ═══════════════════════════════════════════════════════
-        yPos = AddSectionHeader(scrollPanel, "Mode temps réel", yPos)
-
-        Dim realtimeGroup As New GroupBox With {
-            .Text = "Choisissez le mode de connexion temps réel",
-            .Location = New Point(20, yPos),
-            .Size = New Size(540, 120),
-            .Font = New Font("Segoe UI", 9, FontStyle.Bold),
-            .ForeColor = Color.FromArgb(28, 28, 30),
-            .BackColor = Color.White
-        }
-
-        _realtimeModePythonRadio = New RadioButton With {
-            .Text = "Python Bridge (Script externe)" & Environment.NewLine & "Lance un script Python. Nécessite Python installé.",
-            .Location = New Point(15, 25),
-            .Size = New Size(510, 35),
-            .Font = New Font("Segoe UI", 9),
-            .ForeColor = Color.FromArgb(28, 28, 30),
-            .BackColor = Color.Transparent
-        }
-        realtimeGroup.Controls.Add(_realtimeModePythonRadio)
-
-        _realtimeModeDotNetOfficialRadio = New RadioButton With {
-            .Text = "SDK Officiel Tuya .NET - Recommandé" & Environment.NewLine & "✅ Client .NET natif. Pas de dépendance Python.",
-            .Location = New Point(15, 65),
-            .Size = New Size(510, 35),
-            .Font = New Font("Segoe UI", 9),
-            .ForeColor = Color.FromArgb(28, 28, 30),
-            .BackColor = Color.Transparent,
-            .Checked = True
-        }
-        realtimeGroup.Controls.Add(_realtimeModeDotNetOfficialRadio)
-
-        scrollPanel.Controls.Add(realtimeGroup)
-        yPos += 130
 
         Me.Controls.Add(scrollPanel)
 
@@ -323,6 +307,8 @@ Public Class SettingsForm
     Private Sub LoadSettings()
         _regionTextBox.Text = _config.Region
         _openApiBaseTextBox.Text = _config.OpenApiBase
+        _mqttHostTextBox.Text = _config.MqttHost
+        _mqttPortTextBox.Value = _config.MqttPort
         _accessIdTextBox.Text = _config.AccessId
         _accessSecretTextBox.Text = _config.AccessSecret
         _uidTextBox.Text = _config.Uid
@@ -331,13 +317,6 @@ Public Class SettingsForm
         _pythonFallbackPathTextBox.Text = _config.PythonFallbackPath
 
         _showRawPayloadsCheckBox.Checked = _config.ShowRawPayloads
-
-        ' Charger le mode temps réel
-        If _config.RealtimeMode = RealtimeMode.DotNetPulsarOfficial Then
-            _realtimeModeDotNetOfficialRadio.Checked = True
-        Else
-            _realtimeModePythonRadio.Checked = True
-        End If
     End Sub
 
     Private Sub SaveButton_Click(sender As Object, e As EventArgs)
@@ -355,9 +334,8 @@ Public Class SettingsForm
                 Return
             End If
 
-            ' Valider le script Python seulement si le mode Python Bridge est sélectionné
-            If _realtimeModePythonRadio.Checked AndAlso String.IsNullOrWhiteSpace(_pythonScriptPathTextBox.Text) Then
-                MessageBox.Show("Le chemin du script Python est requis pour le mode Python Bridge.", "Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            If String.IsNullOrWhiteSpace(_pythonScriptPathTextBox.Text) Then
+                MessageBox.Show("Le chemin du script Python est requis.", "Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning)
                 _pythonScriptPathTextBox.Focus()
                 Return
             End If
@@ -365,6 +343,8 @@ Public Class SettingsForm
             ' Sauvegarder
             _config.Region = _regionTextBox.Text.Trim()
             _config.OpenApiBase = _openApiBaseTextBox.Text.Trim()
+            _config.MqttHost = _mqttHostTextBox.Text.Trim()
+            _config.MqttPort = CInt(_mqttPortTextBox.Value)
             _config.AccessId = _accessIdTextBox.Text.Trim()
             _config.AccessSecret = _accessSecretTextBox.Text.Trim()
             _config.Uid = _uidTextBox.Text.Trim()
@@ -373,11 +353,6 @@ Public Class SettingsForm
             _config.PythonFallbackPath = _pythonFallbackPathTextBox.Text.Trim()
 
             _config.ShowRawPayloads = _showRawPayloadsCheckBox.Checked
-
-            ' Sauvegarder le mode temps réel
-            _config.RealtimeMode = If(_realtimeModeDotNetOfficialRadio.Checked,
-                                     RealtimeMode.DotNetPulsarOfficial,
-                                     RealtimeMode.PythonBridge)
 
             _config.Save()
 
@@ -423,6 +398,8 @@ Public Class SettingsForm
             Dim testConfig As New TuyaConfig()
             testConfig.Region = _regionTextBox.Text.Trim()
             testConfig.OpenApiBase = _openApiBaseTextBox.Text.Trim()
+            testConfig.MqttHost = _mqttHostTextBox.Text.Trim()
+            testConfig.MqttPort = CInt(_mqttPortTextBox.Value)
             testConfig.AccessId = _accessIdTextBox.Text.Trim()
             testConfig.AccessSecret = _accessSecretTextBox.Text.Trim()
             testConfig.Uid = _uidTextBox.Text.Trim()
