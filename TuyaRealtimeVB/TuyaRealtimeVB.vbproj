@@ -27,6 +27,9 @@
   <ItemGroup>
     <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <!-- DotPulsar pour .NET Pulsar natif -->
+    <PackageReference Include="DotPulsar" Version="3.3.1" />
+    <!-- ScottPlot pour graphiques et historiques -->
     <PackageReference Include="ScottPlot.WinForms" Version="5.0.42" />
   </ItemGroup>
   <ItemGroup>

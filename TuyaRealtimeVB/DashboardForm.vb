@@ -1,10 +1,12 @@
 ﻿Imports System.Drawing
 Imports System.Windows.Forms
+Imports Newtonsoft.Json
 Imports Newtonsoft.Json.Linq
 Imports System.IO
 Imports System.Text
 Imports System.Diagnostics
 Imports System.Linq
+Imports System.Collections.Concurrent
 
 Public Class DashboardForm
     Inherits Form
@@ -34,9 +36,8 @@ Public Class DashboardForm
 
 #Region "Champs privés - Services"
     Private _httpServer As TuyaHttpServer
-    Private _pythonBridge As PythonBridge
+    Private _realtimeClient As ITuyaRealtimeClient
     Private _apiClient As TuyaApiClient
-    Private _historyService As TuyaHistoryService  ' Service pour l'historique des appareils
     Private _config As TuyaConfig
     Private ReadOnly _notificationManager As NotificationManager
 #End Region
@@ -61,10 +62,9 @@ Public Class DashboardForm
 #End Region
 
 #Region "Champs privés - État"
-    Private ReadOnly _deviceCards As New Dictionary(Of String, DeviceCard)
-    Private ReadOnly _deviceInfoCache As New Dictionary(Of String, DeviceInfo)
-    Private ReadOnly _roomHeaders As New Dictionary(Of String, Panel)
-    Private ReadOnly _lockObject As New Object()
+    Private ReadOnly _deviceCards As New ConcurrentDictionary(Of String, DeviceCard)
+    Private ReadOnly _deviceInfoCache As New ConcurrentDictionary(Of String, DeviceInfo)
+    Private ReadOnly _roomHeaders As New ConcurrentDictionary(Of String, Panel)
     Private _resizeTimer As Timer
 
     Private _eventCount As Integer = 0
@@ -74,6 +74,12 @@ Public Class DashboardForm
     Private _isRunning As Boolean = False
     Private _selectedRoomFilter As String = Nothing
     Private _currentView As ViewMode = ViewMode.Grid
+
+    ' REFACTO: Nouveaux champs pour gérer séparation chargement/temps réel
+    Private _dataLoaded As Boolean = False
+    Private _realTimeActive As Boolean = False
+    Private _realTimePausedCount As Integer = 0
+    Private _wasRealTimeActiveBeforePause As Boolean = False
 
     Private Enum ViewMode
         Grid
@@ -228,12 +234,26 @@ Public Class DashboardForm
 
         menu.Items.Add(New ToolStripSeparator())
 
+        ' Administration des Homes/Rooms/Appareils
+        Dim homeAdminMenuItem = New ToolStripMenuItem("🏠 Administration Homes/Pièces/Appareils...") With {
+            .ForeColor = Color.White
+        }
+        AddHandler homeAdminMenuItem.Click, AddressOf HomeAdminMenuItem_Click
+        menu.Items.Add(homeAdminMenuItem)
+
         ' Configuration des catégories
         Dim categoryConfigMenuItem = New ToolStripMenuItem("🏷️ Configuration des catégories...") With {
             .ForeColor = Color.White
         }
         AddHandler categoryConfigMenuItem.Click, AddressOf CategoryConfigMenuItem_Click
         menu.Items.Add(categoryConfigMenuItem)
+
+        ' Automatisations
+        Dim automationMenuItem = New ToolStripMenuItem("⚡ Automatisations...") With {
+            .ForeColor = Color.White
+        }
+        AddHandler automationMenuItem.Click, AddressOf AutomationMenuItem_Click
+        menu.Items.Add(automationMenuItem)
 
         menu.Items.Add(New ToolStripSeparator())
 
@@ -462,10 +482,6 @@ Public Class DashboardForm
             _apiClient = New TuyaApiClient(_config, tokenProvider, AddressOf LogDebug)
             LogDebug("Client API créé")
 
-            ' Initialiser le service d'historique
-            _historyService = New TuyaHistoryService(_apiClient, AddressOf LogDebug)
-            LogDebug("Service d'historique créé")
-
             ' Afficher les règles de notification
             LogNotificationRules()
 
@@ -480,17 +496,10 @@ Public Class DashboardForm
             UpdateStatus("Récupération des états initiaux...")
             Await LoadInitialDeviceStatesAsync()
 
-            ' Vérifier le script Python
-            Dim pythonScriptPath = _config.GetPythonScriptPath()
-            If String.IsNullOrEmpty(pythonScriptPath) Then
-                HandleMissingPythonScript()
-                Return
-            End If
-
             ' Démarrer les services
             UpdateStatus("Démarrage du serveur...")
             StartHttpServer()
-            StartPythonBridge(pythonScriptPath)
+            Await StartRealtimeClientAsync()
 
             UpdateStatus($"Prêt - {_deviceInfoCache.Count} appareils en cache")
             LogDebug("=== SYSTÈME OPÉRATIONNEL - EN ÉCOUTE ===")
@@ -543,12 +552,33 @@ Public Class DashboardForm
         LogDebug("Serveur HTTP démarré")
     End Sub
 
-    Private Sub StartPythonBridge(scriptPath As String)
-        LogDebug($"Démarrage du pont Python : {scriptPath}")
-        _pythonBridge = New PythonBridge(scriptPath)
-        _pythonBridge.Start()
-        LogDebug("Pont Python démarré")
-    End Sub
+    Private Async Function StartRealtimeClientAsync() As Task
+        Try
+            LogDebug($"=== DÉMARRAGE CLIENT TEMPS RÉEL ===")
+            LogDebug($"Mode : {TuyaRealtimeFactory.GetModeName(_config.RealtimeMode)}")
+
+            ' Créer le client via la factory
+            _realtimeClient = TuyaRealtimeFactory.CreateClient(_config, AddressOf LogDebug)
+
+            ' Connecter l'événement DeviceStatusChanged (pour SDK Tuya .NET)
+            AddHandler _realtimeClient.DeviceStatusChanged, AddressOf OnDeviceStatusChanged
+
+            ' Démarrer le client
+            Dim success = Await _realtimeClient.StartAsync()
+
+            If success Then
+                LogDebug($"✅ Client temps réel démarré ({_realtimeClient.Mode})")
+                _realTimeActive = True
+            Else
+                LogDebug($"❌ Échec démarrage client temps réel")
+                _realTimeActive = False
+            End If
+
+        Catch ex As Exception
+            LogDebug($"❌ Erreur StartRealtimeClientAsync: {ex.Message}")
+            _realTimeActive = False
+        End Try
+    End Function
 
     Private Sub StopServices()
         Try
@@ -559,15 +589,145 @@ Public Class DashboardForm
                 _httpServer = Nothing
             End If
 
-            LogDebug("Arrêt du pont Python...")
-            If _pythonBridge IsNot Nothing Then
-                _pythonBridge.Stop()
-                _pythonBridge = Nothing
+            LogDebug("Arrêt du client temps réel...")
+            If _realtimeClient IsNot Nothing Then
+                RemoveHandler _realtimeClient.DeviceStatusChanged, AddressOf OnDeviceStatusChanged
+                _realtimeClient.Stop()
+                _realtimeClient = Nothing
             End If
+
+            _realTimeActive = False
         Catch ex As Exception
             LogDebug($"Erreur lors de l'arrêt des services : {ex.Message}")
             Throw
         End Try
+    End Sub
+
+    ''' <summary>
+    ''' REFACTO: Charge uniquement les données via API (pas de temps réel)
+    ''' Appelé au premier lancement de l'application
+    ''' </summary>
+    Private Async Function LoadInitialDataAsync() As Task
+        Try
+            LogDebug("=== CHARGEMENT INITIAL DES DONNÉES ===")
+
+            ' Charger les catégories
+            Dim deviceCategories = TuyaDeviceCategories.GetInstance()
+            LogDebug($"✅ {deviceCategories.GetAllCategories().Count} catégories chargées")
+
+            ' Charger la configuration
+            _config = TuyaConfig.Load()
+            LogDebug($"Configuration chargée: {_config.AccessId}")
+
+            ' Initialiser l'API client
+            Dim tokenProvider As New TuyaTokenProvider(_config)
+            _apiClient = New TuyaApiClient(_config, tokenProvider, AddressOf LogDebug)
+            LogDebug("Client API créé")
+
+            ' Afficher les règles de notification
+            LogNotificationRules()
+
+            ' Charger les données
+            UpdateStatus("Chargement du cache des pièces...")
+            Await _apiClient.InitializeRoomsCacheAsync()
+            LogDebug("Cache des pièces initialisé")
+
+            UpdateStatus("Chargement de tous les appareils...")
+            Await LoadAllDevicesInfoAsync()
+
+            UpdateStatus("Récupération des états initiaux...")
+            Await LoadInitialDeviceStatesAsync()
+
+            _dataLoaded = True
+            UpdateStatus($"Données chargées - {_deviceInfoCache.Count} appareils")
+            LogDebug($"=== DONNÉES CHARGÉES - {_deviceInfoCache.Count} appareils ===")
+            LogDebug("Utilisez Fichier > Démarrer pour activer l'écoute temps réel")
+
+        Catch ex As Exception
+            HandleError("Erreur chargement initial des données", ex)
+            Throw
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' REFACTO: Démarre uniquement les services temps réel (serveur HTTP + Client)
+    ''' </summary>
+    Private Async Function StartRealTimeServicesAsync() As Task
+        Try
+            LogDebug("=== DÉMARRAGE SERVICES TEMPS RÉEL ===")
+
+            ' Démarrer les services
+            UpdateStatus("Démarrage du serveur...")
+            StartHttpServer()
+            Await StartRealtimeClientAsync()
+
+            _allowAutoScroll = True
+            UpdateStatus("Temps réel actif - En écoute des événements")
+            LogDebug("=== TEMPS RÉEL ACTIF ===")
+
+        Catch ex As Exception
+            HandleError("Erreur démarrage temps réel", ex)
+            Throw
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' REFACTO: Arrête uniquement les services temps réel
+    ''' </summary>
+    Private Sub StopRealTimeServices()
+        Try
+            LogDebug("=== ARRÊT SERVICES TEMPS RÉEL ===")
+            StopServices()
+            _realTimeActive = False
+            _allowAutoScroll = False
+            UpdateStatus("Temps réel arrêté")
+            LogDebug("=== TEMPS RÉEL ARRÊTÉ ===")
+        Catch ex As Exception
+            LogDebug($"Erreur arrêt temps réel: {ex.Message}")
+            Throw
+        End Try
+    End Sub
+
+    ''' <summary>
+    ''' REFACTO: Met en pause le temps réel temporairement
+    ''' Utilise un compteur pour gérer les appels imbriqués
+    ''' </summary>
+    Private Sub PauseRealTime()
+        _realTimePausedCount += 1
+
+        ' Première pause : sauvegarder l'état et arrêter si actif
+        If _realTimePausedCount = 1 Then
+            _wasRealTimeActiveBeforePause = _realTimeActive
+            If _realTimeActive Then
+                LogDebug("⏸️ PAUSE AUTOMATIQUE du temps réel")
+                StopRealTimeServices()
+            End If
+        End If
+    End Sub
+
+    ''' <summary>
+    ''' REFACTO: Reprend le temps réel après une pause
+    ''' Utilise un compteur pour gérer les appels imbriqués
+    ''' </summary>
+    Private Sub ResumeRealTime()
+        If _realTimePausedCount > 0 Then
+            _realTimePausedCount -= 1
+
+            ' Dernière reprise : redémarrer si c'était actif avant
+            If _realTimePausedCount = 0 AndAlso _wasRealTimeActiveBeforePause Then
+                LogDebug("▶️ REPRISE AUTOMATIQUE du temps réel")
+                ' Fire-and-forget avec gestion d'erreur
+                Dim resumeTask = Task.Run(
+                    Async Function()
+                        Try
+                            Await StartRealTimeServicesAsync()
+                        Catch ex As Exception
+                            LogDebug($"❌ Erreur reprise temps réel: {ex.Message}")
+                        End Try
+                    End Function)
+                _wasRealTimeActiveBeforePause = False
+            End If
+        End If
     End Sub
 #End Region
 
@@ -578,11 +738,10 @@ Public Class DashboardForm
             Dim devices = Await _apiClient.GetAllDevicesAsync()
             LogDebug($"API a retourné {devices.Count} appareils")
 
-            SyncLock _lockObject
-                For Each device In devices
-                    _deviceInfoCache(device.Id) = device
-                Next
-            End SyncLock
+            ' ConcurrentDictionary est thread-safe, pas besoin de lock
+            For Each device In devices
+                _deviceInfoCache(device.Id) = device
+            Next
 
             LogDebug($"✓ {_deviceInfoCache.Count} appareils chargés en cache")
 
@@ -602,28 +761,53 @@ Public Class DashboardForm
 
     Private Async Function LoadInitialDeviceStatesAsync() As Task
         Try
-            Dim count = 0
             Dim total = _deviceCards.Count
+            LogDebug($"=== CHARGEMENT BATCH DES ÉTATS ({total} appareils) ===")
 
-            For Each kvp In _deviceCards.ToList()
-                count += 1
-                Dim deviceId = kvp.Key
-                Dim card = kvp.Value
+            ' Récupérer tous les device IDs
+            Dim allDeviceIds = _deviceCards.Keys.ToList()
+
+            ' Diviser en batches de 20 (limite API Tuya)
+            Dim batchSize = 20
+            Dim batchCount = CInt(Math.Ceiling(allDeviceIds.Count / CDbl(batchSize)))
+            Dim processedCount = 0
+
+            For batchIndex = 0 To batchCount - 1
+                Dim batchDeviceIds = allDeviceIds.Skip(batchIndex * batchSize).Take(batchSize).ToList()
+                Dim batchNumber = batchIndex + 1
 
                 Try
-                    LogDebug($"  [{count}/{total}] Récupération état de {_deviceInfoCache(deviceId).Name}...")
-                    Dim statusJson = Await _apiClient.GetDeviceStatusAsync(deviceId)
+                    LogDebug($"  📦 Batch {batchNumber}/{batchCount}: {batchDeviceIds.Count} appareils...")
 
-                    If statusJson IsNot Nothing AndAlso statusJson("result") IsNot Nothing Then
-                        ProcessDeviceStatus(card, statusJson("result"))
-                        card.UpdateTimestamp()
-                    End If
+                    ' Appel batch API
+                    Dim batchResults = Await _apiClient.GetDeviceStatusBatchAsync(batchDeviceIds)
+
+                    ' Traiter les résultats du batch
+                    For Each deviceId In batchDeviceIds
+                        If batchResults.ContainsKey(deviceId) Then
+                            Try
+                                If _deviceCards.ContainsKey(deviceId) Then
+                                    Dim card = _deviceCards(deviceId)
+                                    ProcessDeviceStatus(card, batchResults(deviceId))
+                                    card.UpdateTimestamp()
+                                    processedCount += 1
+                                End If
+                            Catch ex As Exception
+                                LogDebug($"      Erreur traitement {deviceId}: {ex.Message}")
+                            End Try
+                        Else
+                            LogDebug($"      ⚠️ Status non reçu pour {deviceId}")
+                        End If
+                    Next
+
+                    UpdateStatus($"Chargement états: {processedCount}/{total}")
+
                 Catch ex As Exception
-                    LogDebug($"    Erreur récupération état {deviceId}: {ex.Message}")
+                    LogDebug($"    ❌ Erreur batch {batchNumber}: {ex.Message}")
                 End Try
             Next
 
-            LogDebug($"✓ États initiaux chargés pour {count} appareils")
+            LogDebug($"✅ États initiaux chargés: {processedCount}/{total} appareils ({batchCount} batchs API)")
         Catch ex As Exception
             LogDebug($"ERREUR LoadInitialDeviceStatesAsync: {ex.Message}")
         End Try
@@ -664,14 +848,13 @@ Public Class DashboardForm
         Try
             Dim deviceInfo = Await _apiClient.GetDeviceInfoAsync(devId)
             If deviceInfo IsNot Nothing Then
-                SyncLock _lockObject
-                    _deviceInfoCache(devId) = deviceInfo
-                    If InvokeRequired Then
-                        BeginInvoke(New Action(Of String, DeviceInfo)(AddressOf CreateDeviceCardDynamic), devId, deviceInfo)
-                    Else
-                        CreateDeviceCardDynamic(devId, deviceInfo)
-                    End If
-                End SyncLock
+                ' ConcurrentDictionary est thread-safe
+                _deviceInfoCache(devId) = deviceInfo
+                If InvokeRequired Then
+                    BeginInvoke(New Action(Of String, DeviceInfo)(AddressOf CreateDeviceCardDynamic), devId, deviceInfo)
+                Else
+                    CreateDeviceCardDynamic(devId, deviceInfo)
+                End If
                 LogDebug($"✓ Appareil chargé: {deviceInfo.Name}")
             Else
                 LogDebug($"✗ Échec chargement {devId}")
@@ -690,6 +873,21 @@ Public Class DashboardForm
         End If
 
         ProcessEvent(eventData)
+    End Sub
+
+    ''' <summary>
+    ''' Gestionnaire pour l'événement DeviceStatusChanged du SDK Tuya .NET
+    ''' </summary>
+    Private Sub OnDeviceStatusChanged(deviceId As String, statusData As JObject)
+        If InvokeRequired Then
+            BeginInvoke(New Action(Of String, JObject)(AddressOf OnDeviceStatusChanged), deviceId, statusData)
+            Return
+        End If
+
+        ' Convertir l'objet JObject en JSON string et appeler ProcessEvent
+        ' statusData contient déjà devId, status, dataId, bizCode, etc.
+        Dim eventJson = statusData.ToString(Formatting.None)
+        ProcessEvent(eventJson)
     End Sub
 
     Private Sub ProcessEvent(eventData As String)
@@ -732,27 +930,26 @@ Public Class DashboardForm
     End Sub
 
     Private Function EnsureDeviceCard(devId As String) As Boolean
-        SyncLock _lockObject
-            If _deviceCards.ContainsKey(devId) Then Return True
+        ' ConcurrentDictionary est thread-safe
+        If _deviceCards.ContainsKey(devId) Then Return True
 
-            If _deviceInfoCache.ContainsKey(devId) Then
-                Dim deviceInfo = _deviceInfoCache(devId)
-                Dim deviceRoomName = If(String.IsNullOrEmpty(deviceInfo.RoomName), "📦 Sans pièce", deviceInfo.RoomName)
+        If _deviceInfoCache.ContainsKey(devId) Then
+            Dim deviceInfo = _deviceInfoCache(devId)
+            Dim deviceRoomName = If(String.IsNullOrEmpty(deviceInfo.RoomName), "📦 Sans pièce", deviceInfo.RoomName)
 
-                If Not String.IsNullOrEmpty(_selectedRoomFilter) AndAlso deviceRoomName <> _selectedRoomFilter Then
-                    LogDebug($"⚠ Appareil {deviceInfo.Name} filtré - pièce: {deviceRoomName}")
-                    Return False
-                End If
-
-                LogDebug($"Création tuile depuis cache: {deviceInfo.Name}")
-                CreateDeviceCard(devId, deviceInfo)
-                Return True
-            Else
-                LogDebug($"⚠ Appareil non en cache, chargement API...")
-                LoadDeviceAsync(devId)
+            If Not String.IsNullOrEmpty(_selectedRoomFilter) AndAlso deviceRoomName <> _selectedRoomFilter Then
+                LogDebug($"⚠ Appareil {deviceInfo.Name} filtré - pièce: {deviceRoomName}")
                 Return False
             End If
-        End SyncLock
+
+            LogDebug($"Création tuile depuis cache: {deviceInfo.Name}")
+            CreateDeviceCard(devId, deviceInfo)
+            Return True
+        Else
+            LogDebug($"⚠ Appareil non en cache, chargement API...")
+            LoadDeviceAsync(devId)
+            Return False
+        End If
     End Function
 
     Private Sub ProcessDeviceEvent(json As JObject, devId As String)
@@ -975,9 +1172,7 @@ Public Class DashboardForm
 
     Private Sub CreateDeviceCard(devId As String, deviceInfo As DeviceInfo)
         Try
-            Dim card = New DeviceCard(devId)
-            card.SetApiClient(_apiClient)
-            card.SetHistoryService(_historyService)  ' Configurer le service d'historique
+            Dim card = New DeviceCard(devId, _apiClient)
             card.UpdateDeviceInfo(deviceInfo)
             _deviceCards(devId) = card
             _devicesPanel.Controls.Add(card)
@@ -994,9 +1189,7 @@ Public Class DashboardForm
                 Return
             End If
 
-            Dim card = New DeviceCard(devId)
-            card.SetApiClient(_apiClient)
-            card.SetHistoryService(_historyService)  ' Configurer le service d'historique
+            Dim card = New DeviceCard(devId, _apiClient)
             card.UpdateDeviceInfo(deviceInfo)
             _deviceCards(devId) = card
 
@@ -1164,48 +1357,67 @@ Public Class DashboardForm
         End If
     End Sub
 
-    Private Sub StartMenuItem_Click(sender As Object, e As EventArgs)
-        If _isRunning Then
-            MessageBox.Show("L'application est déjà démarrée.", "Information",
-                          MessageBoxButtons.OK, MessageBoxIcon.Information)
-            Return
-        End If
-
+    Private Async Sub StartMenuItem_Click(sender As Object, e As EventArgs)
         Try
-            LogDebug("=== DÉMARRAGE MANUEL DES SERVICES ===")
+            ' REFACTO: Premier lancement => charger les données d'abord
+            If Not _dataLoaded Then
+                LogDebug("=== PREMIER DÉMARRAGE - CHARGEMENT DES DONNÉES ===")
+                _startMenuItem.Enabled = False
+                UpdateStatus("Chargement initial des données...")
+
+                Await LoadInitialDataAsync()
+
+                _startMenuItem.Text = "▶ Démarrer le temps réel"
+                _startMenuItem.Enabled = True
+                Return
+            End If
+
+            ' REFACTO: Données déjà chargées => démarrer le temps réel
+            If _realTimeActive Then
+                MessageBox.Show("Le processus temps réel est déjà actif.", "Information",
+                              MessageBoxButtons.OK, MessageBoxIcon.Information)
+                Return
+            End If
+
+            LogDebug("=== DÉMARRAGE TEMPS RÉEL ===")
             _startMenuItem.Enabled = False
             _stopMenuItem.Enabled = True
             _isRunning = True
-            InitializeServices()
+
+            Await StartRealTimeServicesAsync()
+
+            _startMenuItem.Enabled = True
+
         Catch ex As Exception
             HandleError("Erreur lors du démarrage", ex)
             _startMenuItem.Enabled = True
             _stopMenuItem.Enabled = False
             _isRunning = False
+            _realTimeActive = False
         End Try
     End Sub
 
     Private Sub StopMenuItem_Click(sender As Object, e As EventArgs)
-        If Not _isRunning Then
-            MessageBox.Show("L'application n'est pas démarrée.", "Information",
+        If Not _realTimeActive Then
+            MessageBox.Show("Le processus temps réel n'est pas actif.", "Information",
                           MessageBoxButtons.OK, MessageBoxIcon.Information)
             Return
         End If
 
         Dim result = MessageBox.Show(
-            "Êtes-vous sûr de vouloir arrêter les services ?" & Environment.NewLine & Environment.NewLine &
+            "Êtes-vous sûr de vouloir arrêter le temps réel ?" & Environment.NewLine & Environment.NewLine &
             "Les événements en temps réel ne seront plus reçus.",
             "Confirmation", MessageBoxButtons.YesNo, MessageBoxIcon.Question)
 
         If result = DialogResult.Yes Then
             Try
-                LogDebug("=== ARRÊT MANUEL DES SERVICES ===")
-                StopServices()
+                LogDebug("=== ARRÊT MANUEL TEMPS RÉEL ===")
+                StopRealTimeServices()
                 _startMenuItem.Enabled = True
                 _stopMenuItem.Enabled = False
                 _isRunning = False
-                UpdateStatus("Services arrêtés - Cliquez sur Fichier > Démarrer pour redémarrer")
-                LogDebug("Services arrêtés avec succès")
+                UpdateStatus("Temps réel arrêté - Cliquez sur Fichier > Démarrer pour redémarrer")
+                LogDebug("Temps réel arrêté avec succès")
             Catch ex As Exception
                 HandleError("Erreur lors de l'arrêt", ex)
             End Try
@@ -1345,28 +1557,141 @@ Public Class DashboardForm
         flashTimer.Start()
     End Sub
 
-    Private Sub CategoryConfigMenuItem_Click(sender As Object, e As EventArgs)
+    Private Async Sub HomeAdminMenuItem_Click(sender As Object, e As EventArgs)
         Try
-            Using configForm As New CategoryConfigForm()
-                configForm.ShowDialog()
+            If _apiClient Is Nothing Then
+                MessageBox.Show(
+                    "Le client API n'est pas encore démarré." & Environment.NewLine & Environment.NewLine &
+                    "Veuillez d'abord charger les données (Fichier > Démarrer).",
+                    "Information", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                Return
+            End If
 
-                ' ✅ VÉRIFIER SI DES CHANGEMENTS ONT ÉTÉ SAUVEGARDÉS
-                If configForm.WasSaved Then
-                    LogDebug("=== RAFRAÎCHISSEMENT APRÈS MODIFICATION CONFIG ===")
+            ' REFACTO: Pause automatique du temps réel (transparent pour l'utilisateur)
+            PauseRealTime()
 
-                    ' Recharger la configuration dans le manager
-                    TuyaCategoryManager.Instance.LoadConfiguration()
-                    LogDebug("Configuration rechargée dans le manager")
+            Try
+                ' OPTIMISATION: Préparer les données en cache pour éviter les appels API
+                LogDebug("=== OUVERTURE ADMINISTRATION (MODE OPTIMISÉ) ===")
+                Dim cachedDevices As New List(Of DeviceInfo)
 
-                    ' Rafraîchir toutes les cartes d'appareils
-                    RefreshAllDeviceCards()
+                ' Copier les données déjà en cache (ConcurrentDictionary = thread-safe, pas besoin de lock)
+                cachedDevices.AddRange(_deviceInfoCache.Values)
+
+                If cachedDevices.Count = 0 Then
+                    LogDebug("⚠️ Aucune donnée en cache - l'administration chargera depuis l'API (peut être lent)")
+                    UpdateStatus("Ouverture administration - chargement initial...")
+                Else
+                    LogDebug($"✓ {cachedDevices.Count} appareils passés au formulaire d'administration (mode rapide)")
+                    UpdateStatus("Ouverture administration - mode rapide...")
+                End If
+
+                ' Ouvrir le formulaire avec les données pré-chargées (pas d'appels API supplémentaires)
+                Using adminForm As New HomeAdminForm(_apiClient, cachedDevices)
+                    Dim result = adminForm.ShowDialog()
+
+                ' Rafraîchir l'affichage après fermeture si des changements ont été effectués
+                If result = DialogResult.OK OrElse result = DialogResult.Cancel Then
+                    LogDebug("=== RAFRAÎCHISSEMENT AFFICHAGE APRÈS ADMINISTRATION ===")
+
+                    ' Les modifications dans HomeAdminForm ont déjà mis à jour _preloadedDevices (cache local)
+                    ' Pas besoin de recharger depuis l'API, juste rafraîchir l'affichage !
+                    DisplayDevicesByRoom()
 
                     LogDebug("=== RAFRAÎCHISSEMENT TERMINÉ ===")
-                    UpdateStatus("Configuration mise à jour - Toutes les cartes rafraîchies")
+                    UpdateStatus("Affichage rafraîchi après administration")
                 End If
             End Using
+
+            Catch ex As Exception
+                LogDebug(String.Format("Erreur ouverture administration: {0}", ex.Message))
+                MessageBox.Show($"Erreur lors de l'ouverture de l'administration :{Environment.NewLine}{ex.Message}",
+                              "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            Finally
+                ' REFACTO: Reprise automatique du temps réel
+                ResumeRealTime()
+            End Try
+
         Catch ex As Exception
-            LogDebug(String.Format("Erreur ouverture config catégories: {0}", ex.Message))
+            LogDebug(String.Format("Erreur critique administration: {0}", ex.Message))
+            MessageBox.Show($"Erreur critique :{Environment.NewLine}{ex.Message}",
+                          "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        End Try
+    End Sub
+
+    Private Sub CategoryConfigMenuItem_Click(sender As Object, e As EventArgs)
+        Try
+            ' Vérifier que le client API est initialisé
+            If _apiClient Is Nothing Then
+                MessageBox.Show(
+                    "Le client API n'est pas encore démarré." & Environment.NewLine & Environment.NewLine &
+                    "Veuillez d'abord charger les données (Fichier > Démarrer).",
+                    "Information", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                Return
+            End If
+
+            ' REFACTO: Pause automatique du temps réel
+            PauseRealTime()
+
+            Try
+                ' Ouvrir le formulaire de préférences d'affichage
+                Using prefsForm As New DisplayPreferencesForm(_apiClient, Me)
+                    If prefsForm.ShowDialog() = DialogResult.OK Then
+                        ' L'utilisateur a enregistré les préférences, rafraîchir toutes les tuiles
+                        RefreshAllDeviceCards()
+                        LogDebug("✓ Préférences d'affichage appliquées, toutes les tuiles ont été rafraîchies")
+                    End If
+                End Using
+            Finally
+                ResumeRealTime()
+            End Try
+
+        Catch ex As Exception
+            LogDebug($"✗ Erreur ouverture préférences d'affichage: {ex.Message}")
+            MessageBox.Show("Erreur lors de l'ouverture des préférences d'affichage." & Environment.NewLine & ex.Message,
+                          "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            ResumeRealTime()
+        End Try
+    End Sub
+
+    Private Sub AutomationMenuItem_Click(sender As Object, e As EventArgs)
+        Try
+            If _apiClient Is Nothing Then
+                MessageBox.Show(
+                    "Le client API n'est pas encore démarré." & Environment.NewLine & Environment.NewLine &
+                    "Veuillez d'abord charger les données (Fichier > Démarrer).",
+                    "Information", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                Return
+            End If
+
+            ' REFACTO: Pause automatique du temps réel
+            PauseRealTime()
+
+            Try
+                LogDebug("=== OUVERTURE GESTION AUTOMATISATIONS ===")
+                UpdateStatus("Ouverture gestion des automatisations...")
+
+                ' Ouvrir le formulaire de gestion des automatisations
+                Using automationForm As New AutomationForm(_apiClient)
+                    automationForm.ShowDialog()
+                End Using
+
+                LogDebug("=== FORMULAIRE AUTOMATISATIONS FERMÉ ===")
+                UpdateStatus("Gestion des automatisations fermée")
+
+            Catch ex As Exception
+                LogDebug(String.Format("Erreur ouverture automatisations: {0}", ex.Message))
+                MessageBox.Show($"Erreur lors de l'ouverture de la gestion des automatisations :{Environment.NewLine}{ex.Message}",
+                              "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            Finally
+                ' REFACTO: Reprise automatique du temps réel
+                ResumeRealTime()
+            End Try
+
+        Catch ex As Exception
+            LogDebug(String.Format("Erreur critique automatisations: {0}", ex.Message))
+            MessageBox.Show($"Erreur critique :{Environment.NewLine}{ex.Message}",
+                          "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
         End Try
     End Sub
 
@@ -1374,13 +1699,12 @@ Public Class DashboardForm
         Try
             Dim cardCount As Integer = 0
 
-            SyncLock _lockObject
-                For Each kvp In _deviceCards.ToList()
-                    Dim card As DeviceCard = kvp.Value
-                    card.RefreshDisplay()
-                    cardCount += 1
-                Next
-            End SyncLock
+            ' ConcurrentDictionary est thread-safe, pas besoin de lock
+            For Each kvp In _deviceCards.ToList()
+                Dim card As DeviceCard = kvp.Value
+                card.RefreshDisplay()
+                cardCount += 1
+            Next
 
             LogDebug(String.Format("✓ {0} cartes d'appareils rafraîchies", cardCount))
 
@@ -1394,6 +1718,68 @@ Public Class DashboardForm
             LogDebug(String.Format("Erreur RefreshAllDeviceCards: {0}", ex.Message))
         End Try
     End Sub
+
+    ''' <summary>
+    ''' Rafraîchit uniquement les tuiles d'une catégorie spécifique (optimisé)
+    ''' </summary>
+    Public Sub RefreshDeviceCardsByCategory(category As String)
+        Try
+            Dim cardCount As Integer = 0
+
+            ' ConcurrentDictionary = thread-safe, pas besoin de lock
+            For Each kvp In _deviceCards.ToList()
+                Dim card As DeviceCard = kvp.Value
+
+                ' Rafraîchir uniquement si la carte appartient à la catégorie
+                If card.Category = category Then
+                    card.RefreshDisplay()
+                    cardCount += 1
+                End If
+            Next
+
+            LogDebug($"✓ {cardCount} carte(s) de la catégorie '{category}' rafraîchie(s)")
+
+            ' Rafraîchir également la vue tableau si elle est active
+            If _currentView = ViewMode.Table AndAlso _tableView.Visible Then
+                LogDebug("Rafraîchissement de la vue tableau...")
+                SwitchToTableView(Nothing, Nothing)
+            End If
+
+        Catch ex As Exception
+            LogDebug($"✗ Erreur RefreshDeviceCardsByCategory pour '{category}': {ex.Message}")
+        End Try
+    End Sub
+
+    ''' <summary>
+    ''' Retourne toutes les propriétés connues pour une catégorie donnée
+    ''' Inclut les sous-propriétés JSON découvertes dynamiquement
+    ''' </summary>
+    Public Function GetKnownPropertiesForCategory(category As String) As HashSet(Of String)
+        Dim knownProperties As New HashSet(Of String)
+
+        Try
+            ' ConcurrentDictionary = thread-safe, pas besoin de lock
+            ' Parcourir tous les DeviceCard de cette catégorie
+            For Each kvp In _deviceCards.ToList()
+                Dim card As DeviceCard = kvp.Value
+
+                ' Vérifier si la carte appartient à la catégorie recherchée
+                If card.Category = category Then
+                    ' Récupérer toutes les propriétés connues de cette carte
+                    Dim propertyCodes = card.GetAllKnownPropertyCodes()
+                    For Each code In propertyCodes
+                        knownProperties.Add(code)
+                    Next
+                End If
+            Next
+
+            LogDebug($"✓ {knownProperties.Count} propriétés connues pour la catégorie '{category}'")
+        Catch ex As Exception
+            LogDebug($"✗ Erreur GetKnownPropertiesForCategory: {ex.Message}")
+        End Try
+
+        Return knownProperties
+    End Function
 
 #End Region
 
@@ -1430,25 +1816,11 @@ Public Class DashboardForm
             Dim timestamp = DateTime.Now.ToString("HH:mm:ss.fff")
             Dim logMessage = $"[{timestamp}] {message}{Environment.NewLine}"
 
-            ' Limiter le nombre de lignes
+            ' Limiter le nombre de lignes - OPTIMISÉ
             If _debugTextBox.Lines.Length > MAX_DEBUG_LINES Then
-                Dim currentText = _debugTextBox.Text
-                Dim newLineIndex = 0
-                Dim lineCount = 0
-
-                For i As Integer = 0 To currentText.Length - 1
-                    If currentText(i) = ControlChars.Lf Then
-                        lineCount += 1
-                        If lineCount = LINES_TO_REMOVE Then
-                            newLineIndex = i + 1
-                            Exit For
-                        End If
-                    End If
-                Next
-
-                If newLineIndex > 0 AndAlso newLineIndex < currentText.Length Then
-                    _debugTextBox.Text = currentText.Substring(newLineIndex)
-                End If
+                Dim lines = _debugTextBox.Lines
+                Dim newLines = lines.Skip(LINES_TO_REMOVE).ToArray()
+                _debugTextBox.Lines = newLines
             End If
 
             _debugTextBox.AppendText(logMessage)
