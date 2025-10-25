@@ -19,7 +19,7 @@ Public Class TuyaRealtimeFactory
                     Throw New FileNotFoundException("Script Python introuvable. Vérifiez la configuration.")
                 End If
                 logCallback?.Invoke($"[Factory] Mode Python Bridge - Script: {scriptPath}")
-                Return New PythonBridge(scriptPath, logCallback)
+                Return New PythonBridge(scriptPath)
 
             Case RealtimeMode.DotNetPulsarOfficial
                 ' Mode SDK officiel Tuya en .NET - RECOMMANDÉ

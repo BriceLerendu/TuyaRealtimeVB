@@ -16,8 +16,8 @@ Public Class TuyaConfig
     Public Property PythonScriptPath As String
     Public Property PythonFallbackPath As String
 
-    ' Mode temps réel : "Python" ou "Pulsar"
-    Public Property RealtimeMode As String
+    ' Mode temps réel : PythonBridge ou DotNetPulsarOfficial
+    Public Property RealtimeMode As RealtimeMode
 
     ' Propri�t�s pour le logging
     Public Property ShowRawPayloads As Boolean
@@ -55,7 +55,8 @@ Public Class TuyaConfig
         End If
 
         ' Mode temps réel (Python par défaut pour compatibilité)
-        config.RealtimeMode = If(obj("RealtimeMode")?.ToString(), "Python")
+        Dim modeString = If(obj("RealtimeMode")?.ToString(), "Python")
+        config.RealtimeMode = ParseRealtimeMode(modeString)
 
         ' Configuration Logging
         Dim logging = obj("Logging")
@@ -92,7 +93,7 @@ Public Class TuyaConfig
         )
 
         ' Mode temps réel
-        obj("RealtimeMode") = RealtimeMode
+        obj("RealtimeMode") = FormatRealtimeMode(RealtimeMode)
 
         ' Section Logging
         obj("Logging") = New JObject(
@@ -124,5 +125,38 @@ Public Class TuyaConfig
 
         ' Aucun fichier trouv�
         Return Nothing
+    End Function
+
+    ' Convertit une string du JSON en enum RealtimeMode
+    Private Shared Function ParseRealtimeMode(modeString As String) As RealtimeMode
+        If String.IsNullOrEmpty(modeString) Then
+            Return RealtimeMode.PythonBridge ' Défaut
+        End If
+
+        Select Case modeString.ToLower()
+            Case "python", "pythonbridge"
+                Return RealtimeMode.PythonBridge
+            Case "pulsar", "dotnetpulsarofficial"
+                Return RealtimeMode.DotNetPulsarOfficial
+            Case Else
+                ' Essayer de parser directement l'enum
+                Dim result As RealtimeMode
+                If [Enum].TryParse(modeString, True, result) Then
+                    Return result
+                End If
+                Return RealtimeMode.PythonBridge ' Défaut si échec
+        End Select
+    End Function
+
+    ' Convertit l'enum RealtimeMode en string pour le JSON
+    Private Shared Function FormatRealtimeMode(mode As RealtimeMode) As String
+        Select Case mode
+            Case RealtimeMode.PythonBridge
+                Return "Python"
+            Case RealtimeMode.DotNetPulsarOfficial
+                Return "Pulsar"
+            Case Else
+                Return "Python"
+        End Select
     End Function
 End Class
