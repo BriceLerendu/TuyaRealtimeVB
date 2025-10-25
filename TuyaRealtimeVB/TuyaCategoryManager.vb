@@ -386,4 +386,88 @@ Public Class TuyaCategoryManager
     Public Function GetConfigPath() As String
         Return _configPath
     End Function
+
+    ''' <summary>
+    ''' Détermine le type de graphique à utiliser pour une propriété
+    ''' </summary>
+    ''' <param name="category">Catégorie de l'appareil (ex: "wsdcg", "cz")</param>
+    ''' <param name="code">Code de la propriété (ex: "va_temperature", "switch")</param>
+    ''' <returns>"state" pour états discrets, "numeric" pour valeurs continues</returns>
+    Public Function GetPropertyChartType(category As String, code As String) As String
+        Try
+            Dim propertyConfig = GetPropertyConfig(category, code)
+
+            If propertyConfig Is Nothing Then
+                Return "numeric" ' Par défaut : numérique
+            End If
+
+            Dim conversion = propertyConfig("conversion")?.ToString()
+
+            Select Case conversion
+                Case "boolean", "enum"
+                    Return "state" ' Timeline d'états
+                Case Else
+                    Return "numeric" ' Courbe/Barres
+            End Select
+
+        Catch ex As Exception
+            Debug.WriteLine($"Erreur GetPropertyChartType: {ex.Message}")
+            Return "numeric"
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Obtient l'unité d'une propriété pour l'affichage sur les graphiques
+    ''' </summary>
+    ''' <param name="category">Catégorie de l'appareil</param>
+    ''' <param name="code">Code de la propriété</param>
+    ''' <returns>Unité (ex: "°C", "W", "%") ou chaîne vide</returns>
+    Public Function GetPropertyUnit(category As String, code As String) As String
+        Try
+            Dim propertyConfig = GetPropertyConfig(category, code)
+            If propertyConfig Is Nothing Then Return ""
+
+            Return If(propertyConfig("unit")?.ToString(), "")
+
+        Catch ex As Exception
+            Debug.WriteLine($"Erreur GetPropertyUnit: {ex.Message}")
+            Return ""
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Obtient la liste des propriétés d'une catégorie qui peuvent être affichées dans l'historique
+    ''' </summary>
+    ''' <param name="category">Catégorie de l'appareil</param>
+    ''' <returns>Dictionnaire code -> displayName</returns>
+    Public Function GetHistoricalProperties(category As String) As Dictionary(Of String, String)
+        Dim properties As New Dictionary(Of String, String)
+
+        Try
+            Dim categoryConfig = _config("categories")(category)
+
+            If categoryConfig IsNot Nothing Then
+                Dim propertiesNode = categoryConfig("properties")
+
+                If propertiesNode IsNot Nothing Then
+                    For Each prop As JProperty In propertiesNode.Children(Of JProperty)()
+                        If prop.Name <> "*" Then ' Ignorer les wildcards
+                            Dim displayName = prop.Value("displayName")?.ToString()
+                            Dim icon = prop.Value("icon")?.ToString()
+
+                            If Not String.IsNullOrEmpty(displayName) Then
+                                Dim fullName = If(Not String.IsNullOrEmpty(icon), $"{icon} {displayName}", displayName)
+                                properties(prop.Name) = fullName
+                            End If
+                        End If
+                    Next
+                End If
+            End If
+
+        Catch ex As Exception
+            Debug.WriteLine($"Erreur GetHistoricalProperties: {ex.Message}")
+        End Try
+
+        Return properties
+    End Function
 End Class

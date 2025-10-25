@@ -41,6 +41,7 @@ Public Class DeviceCard
     Private _lastUpdateTime As DateTime = DateTime.MinValue
     Private _apiClient As TuyaApiClient
     Private ReadOnly _rawValues As New Dictionary(Of String, String)  ' ✅ NOUVEAU
+    Private _historyService As TuyaHistoryService  ' Service d'historique
 #End Region
 
 #Region "Champs privés - Contrôles UI"
@@ -51,6 +52,7 @@ Public Class DeviceCard
     Private _timestampLabel As Label
     Private _statusFooter As Panel
     Private _iconLabel As Label
+    Private _historyButton As Button  ' Bouton historique
     Private ReadOnly _properties As New Dictionary(Of String, Label)
     Private ReadOnly _propertyCodes As New Dictionary(Of Label, String)
 #End Region
@@ -179,6 +181,23 @@ Public Class DeviceCard
         }
         footer.Controls.Add(_statusLabel)
 
+        ' Bouton historique
+        _historyButton = New Button With {
+            .Text = "📊",
+            .Font = New Font("Segoe UI Emoji", 10),
+            .Size = New Size(30, 26),
+            .FlatStyle = FlatStyle.Flat,
+            .BackColor = Color.FromArgb(0, 119, 255),
+            .ForeColor = Color.White,
+            .Cursor = Cursors.Hand,
+            .TabStop = False,
+            .Visible = False
+        }
+        _historyButton.FlatAppearance.BorderSize = 0
+        _historyButton.FlatAppearance.BorderColor = Color.FromArgb(0, 119, 255)
+        AddHandler _historyButton.Click, AddressOf OnHistoryButton_Click
+        footer.Controls.Add(_historyButton)
+
         _timestampLabel = New Label With {
             .Text = "🕐 --:--:--",
             .Font = New Font("Segoe UI", 8),
@@ -189,8 +208,13 @@ Public Class DeviceCard
         footer.Controls.Add(_timestampLabel)
 
         AddHandler footer.Resize, Sub(sender, e)
+                                      ' Positionner le bouton historique à droite (avant le timestamp)
+                                      _historyButton.Location = New Point(
+                                          footer.Width - _historyButton.Width - 10, 4)
+
+                                      ' Positionner le timestamp juste avant le bouton historique
                                       _timestampLabel.Location = New Point(
-                                          footer.Width - _timestampLabel.Width - 15, 10)
+                                          footer.Width - _timestampLabel.Width - _historyButton.Width - 18, 10)
                                   End Sub
 
         Return footer
@@ -715,6 +739,60 @@ Public Class DeviceCard
 #Region "Interaction utilisateur"
     Public Sub SetApiClient(apiClient As TuyaApiClient)
         _apiClient = apiClient
+    End Sub
+
+    ''' <summary>
+    ''' Configure le service d'historique et affiche le bouton
+    ''' </summary>
+    Public Sub SetHistoryService(historyService As TuyaHistoryService)
+        _historyService = historyService
+
+        ' Afficher le bouton historique si le service est disponible
+        If _historyButton IsNot Nothing Then
+            _historyButton.Visible = True
+        End If
+    End Sub
+
+    Private Sub OnHistoryButton_Click(sender As Object, e As EventArgs)
+        ' Empêcher la propagation du clic à la carte
+        If TypeOf sender Is Button Then
+            Dim btn = CType(sender, Button)
+            ' Ne pas propager l'événement
+        End If
+
+        ' Ouvrir la fenêtre d'historique
+        If _historyService IsNot Nothing Then
+            ' Obtenir les propriétés disponibles pour cette catégorie
+            Dim availableProperties = TuyaCategoryManager.Instance.GetHistoricalProperties(_category)
+
+            ' Si aucune propriété configurée, essayer d'en déduire des propriétés actuellement affichées
+            If availableProperties.Count = 0 Then
+                ' Utiliser les propriétés actuellement affichées sur la carte
+                For Each kvp In _properties
+                    Dim code = _propertyCodes(kvp.Value)
+                    Dim displayName = TuyaCategoryManager.Instance.GetDisplayName(_category, code)
+                    availableProperties(code) = displayName
+                Next
+            End If
+
+            ' Si toujours aucune propriété, fallback sur cur_power
+            If availableProperties.Count = 0 Then
+                availableProperties("cur_power") = "⚡ Puissance"
+            End If
+
+            ' Créer et afficher la fenêtre d'historique
+            Dim historyForm As New HistoryForm(
+                _deviceId,
+                _deviceName,
+                _category,
+                _historyService,
+                availableProperties
+            )
+            historyForm.ShowDialog()
+        Else
+            MessageBox.Show("Le service d'historique n'est pas disponible.",
+                          "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End If
     End Sub
 
     Private Sub OnCardClick(sender As Object, e As EventArgs)

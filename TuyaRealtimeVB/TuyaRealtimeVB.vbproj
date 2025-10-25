@@ -27,6 +27,7 @@
   <ItemGroup>
     <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="ScottPlot.WinForms" Version="5.0.42" />
   </ItemGroup>
   <ItemGroup>
     <None Update="appsettings.json">

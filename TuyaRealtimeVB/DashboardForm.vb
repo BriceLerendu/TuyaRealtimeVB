@@ -36,6 +36,7 @@ Public Class DashboardForm
     Private _httpServer As TuyaHttpServer
     Private _pythonBridge As PythonBridge
     Private _apiClient As TuyaApiClient
+    Private _historyService As TuyaHistoryService  ' Service pour l'historique des appareils
     Private _config As TuyaConfig
     Private ReadOnly _notificationManager As NotificationManager
 #End Region
@@ -460,6 +461,10 @@ Public Class DashboardForm
             Dim tokenProvider As New TuyaTokenProvider(_config)
             _apiClient = New TuyaApiClient(_config, tokenProvider, AddressOf LogDebug)
             LogDebug("Client API créé")
+
+            ' Initialiser le service d'historique
+            _historyService = New TuyaHistoryService(_apiClient, AddressOf LogDebug)
+            LogDebug("Service d'historique créé")
 
             ' Afficher les règles de notification
             LogNotificationRules()
@@ -972,6 +977,7 @@ Public Class DashboardForm
         Try
             Dim card = New DeviceCard(devId)
             card.SetApiClient(_apiClient)
+            card.SetHistoryService(_historyService)  ' Configurer le service d'historique
             card.UpdateDeviceInfo(deviceInfo)
             _deviceCards(devId) = card
             _devicesPanel.Controls.Add(card)
@@ -990,6 +996,7 @@ Public Class DashboardForm
 
             Dim card = New DeviceCard(devId)
             card.SetApiClient(_apiClient)
+            card.SetHistoryService(_historyService)  ' Configurer le service d'historique
             card.UpdateDeviceInfo(deviceInfo)
             _deviceCards(devId) = card
 
