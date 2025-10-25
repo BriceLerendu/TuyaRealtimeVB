@@ -1,0 +1,3 @@
+[submodule "External/tuya-pulsar-sdk-dotnet"]
+	path = External/tuya-pulsar-sdk-dotnet
+	url = https://github.com/tuya/tuya-pulsar-sdk-dotnet.git

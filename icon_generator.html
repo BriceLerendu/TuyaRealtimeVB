@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Tuya Dashboard Icon Generator</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: #1a1a2e;
+            font-family: 'Segoe UI', sans-serif;
+            color: white;
+        }
+        .container {
+            text-align: center;
+        }
+        canvas {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            margin: 20px;
+        }
+        button {
+            background: linear-gradient(135deg, #2E5BFF 0%, #FF6B00 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 16px;
+            border-radius: 10px;
+            cursor: pointer;
+            margin: 10px;
+            box-shadow: 0 4px 15px rgba(46, 91, 255, 0.4);
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(46, 91, 255, 0.6);
+        }
+        h1 {
+            background: linear-gradient(135deg, #2E5BFF 0%, #FF6B00 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .preview {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin: 20px 0;
+        }
+        .size-preview {
+            text-align: center;
+        }
+        .size-label {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏠 Icône Tuya Dashboard</h1>
+        <p>Icône inspirée du cloud Tuya pour votre application</p>
+
+        <div class="preview">
+            <div class="size-preview">
+                <canvas id="canvas256" width="256" height="256"></canvas>
+                <div class="size-label">256x256 (Haute résolution)</div>
+            </div>
+            <div class="size-preview">
+                <canvas id="canvas64" width="64" height="64"></canvas>
+                <div class="size-label">64x64 (Moyenne)</div>
+            </div>
+            <div class="size-preview">
+                <canvas id="canvas32" width="32" height="32"></canvas>
+                <div class="size-label">32x32 (Petite)</div>
+            </div>
+        </div>
+
+        <button onclick="downloadPNG256()">💾 Télécharger PNG 256x256</button>
+        <button onclick="downloadPNG64()">💾 Télécharger PNG 64x64</button>
+        <button onclick="downloadPNG32()">💾 Télécharger PNG 32x32</button>
+
+        <p style="margin-top: 30px; color: #888; font-size: 14px;">
+            Ensuite, utilisez un convertisseur en ligne pour créer le .ico:<br>
+            <a href="https://convertio.co/fr/png-ico/" target="_blank" style="color: #2E5BFF;">convertio.co/fr/png-ico</a>
+        </p>
+    </div>
+
+    <script>
+        function drawIcon(canvas, size) {
+            const ctx = canvas.getContext('2d');
+            const scale = size / 256;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, size, size);
+
+            // Background gradient (optionnel - commenté pour fond transparent)
+            // const bgGradient = ctx.createLinearGradient(0, 0, size, size);
+            // bgGradient.addColorStop(0, '#f0f8ff');
+            // bgGradient.addColorStop(1, '#e6f2ff');
+            // ctx.fillStyle = bgGradient;
+            // ctx.fillRect(0, 0, size, size);
+
+            // Scale all coordinates
+            ctx.scale(scale, scale);
+
+            // Draw cloud shape (inspired by Tuya cloud)
+            ctx.beginPath();
+
+            // Main cloud body
+            const centerX = 128;
+            const centerY = 140;
+            const radius = 60;
+
+            // Left bubble
+            ctx.arc(90, centerY, radius * 0.7, Math.PI * 0.5, Math.PI * 1.5);
+
+            // Top bubble
+            ctx.arc(centerX, centerY - 20, radius * 0.75, Math.PI, 0);
+
+            // Right bubble
+            ctx.arc(166, centerY, radius * 0.7, Math.PI * 1.5, Math.PI * 0.5);
+
+            // Bottom
+            ctx.arc(centerX, centerY + 10, radius * 0.9, 0, Math.PI);
+
+            ctx.closePath();
+
+            // Fill cloud with gradient (Tuya colors)
+            const gradient = ctx.createLinearGradient(60, 80, 200, 200);
+            gradient.addColorStop(0, '#2E5BFF');    // Tuya blue
+            gradient.addColorStop(0.5, '#4A7DFF');
+            gradient.addColorStop(1, '#FF6B00');    // Tuya orange
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            // Add subtle shadow
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+            ctx.shadowBlur = 10;
+            ctx.shadowOffsetY = 5;
+
+            // Add white outline for better visibility
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            // Reset shadow
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetY = 0;
+
+            // Draw connection dots (IoT concept)
+            const dots = [
+                {x: 70, y: 120},
+                {x: 128, y: 100},
+                {x: 186, y: 120},
+                {x: 128, y: 160}
+            ];
+
+            ctx.fillStyle = 'white';
+            dots.forEach(dot => {
+                ctx.beginPath();
+                ctx.arc(dot.x, dot.y, 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Add glow effect
+                ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+                ctx.shadowBlur = 10;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+
+            // Draw connection lines between dots
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+
+            for (let i = 0; i < dots.length; i++) {
+                for (let j = i + 1; j < dots.length; j++) {
+                    ctx.beginPath();
+                    ctx.moveTo(dots[i].x, dots[i].y);
+                    ctx.lineTo(dots[j].x, dots[j].y);
+                    ctx.stroke();
+                }
+            }
+
+            ctx.setLineDash([]);
+
+            // Add home icon in center
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            // Simple house shape
+            ctx.moveTo(128, 115); // top
+            ctx.lineTo(145, 130); // right
+            ctx.lineTo(145, 145); // bottom right
+            ctx.lineTo(111, 145); // bottom left
+            ctx.lineTo(111, 130); // left
+            ctx.closePath();
+            ctx.fill();
+
+            // House roof
+            ctx.beginPath();
+            ctx.moveTo(128, 115);
+            ctx.lineTo(150, 133);
+            ctx.lineTo(106, 133);
+            ctx.closePath();
+            ctx.fill();
+
+            // Door
+            ctx.fillStyle = '#2E5BFF';
+            ctx.fillRect(123, 135, 10, 10);
+
+            // Reset scale
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+        }
+
+        // Draw all sizes
+        drawIcon(document.getElementById('canvas256'), 256);
+        drawIcon(document.getElementById('canvas64'), 64);
+        drawIcon(document.getElementById('canvas32'), 32);
+
+        function downloadPNG256() {
+            const canvas = document.getElementById('canvas256');
+            const link = document.createElement('a');
+            link.download = 'tuya_dashboard_icon_256.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        function downloadPNG64() {
+            const canvas = document.getElementById('canvas64');
+            const link = document.createElement('a');
+            link.download = 'tuya_dashboard_icon_64.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        function downloadPNG32() {
+            const canvas = document.getElementById('canvas32');
+            const link = document.createElement('a');
+            link.download = 'tuya_dashboard_icon_32.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+    </script>
+</body>
+</html>
