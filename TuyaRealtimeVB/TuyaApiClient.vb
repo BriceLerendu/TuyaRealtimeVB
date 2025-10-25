@@ -393,6 +393,365 @@ Public Class TuyaApiClient
             Return Nothing
         End Try
     End Function
+
+#Region "Home Management"
+    ''' <summary>
+    ''' Récupère la liste de tous les homes (logements) de l'utilisateur
+    ''' </summary>
+    Public Async Function GetHomesAsync() As Task(Of List(Of JObject))
+        Try
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = BuildUrl(API_VERSION_USERS, _cfg.Uid, "/homes")
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            Dim result = json("result")
+            If result IsNot Nothing AndAlso TypeOf result Is JArray Then
+                Return CType(result, JArray).Cast(Of JObject)().ToList()
+            End If
+            Return New List(Of JObject)()
+        Catch ex As Exception
+            LogError("GetHomesAsync", ex)
+            Return New List(Of JObject)()
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Crée un nouveau home (logement)
+    ''' </summary>
+    Public Async Function CreateHomeAsync(homeName As String) As Task(Of String)
+        Try
+            Dim body = New Dictionary(Of String, Object) From {
+                {"name", homeName}
+            }
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Dim url = BuildUrl(API_VERSION_USERS, _cfg.Uid, "/homes")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePostRequestAsync(url, jsonBody, token)
+            Dim json = JObject.Parse(response)
+
+            If json("success")?.ToObject(Of Boolean)() = True Then
+                Dim homeId = json("result")?("home_id")?.ToString()
+                Log($"✅ Home créé avec succès: {homeId}")
+                Return homeId
+            End If
+            Return Nothing
+        Catch ex As Exception
+            LogError("CreateHomeAsync", ex)
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Renomme un home (logement)
+    ''' </summary>
+    Public Async Function RenameHomeAsync(homeId As String, newName As String) As Task(Of Boolean)
+        Try
+            Dim body = New Dictionary(Of String, Object) From {{"name", newName}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId)
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("RenameHomeAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Supprime un home (logement)
+    ''' </summary>
+    Public Async Function DeleteHomeAsync(homeId As String) As Task(Of Boolean)
+        Try
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId)
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim response = Await ExecuteDeleteRequestAsync(url, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("DeleteHomeAsync", ex)
+            Return False
+        End Try
+    End Function
+#End Region
+
+#Region "Room Management"
+    ''' <summary>
+    ''' Récupère la liste des pièces d'un home
+    ''' </summary>
+    Public Async Function GetRoomsAsync(homeId As String) As Task(Of List(Of JObject))
+        Try
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "/rooms")
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            Dim rooms = json("result")?("rooms")
+            If rooms IsNot Nothing AndAlso TypeOf rooms Is JArray Then
+                Return CType(rooms, JArray).Cast(Of JObject)().ToList()
+            End If
+            Return New List(Of JObject)()
+        Catch ex As Exception
+            LogError("GetRoomsAsync", ex)
+            Return New List(Of JObject)()
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Crée une nouvelle pièce dans un home
+    ''' </summary>
+    Public Async Function CreateRoomAsync(homeId As String, roomName As String) As Task(Of String)
+        Try
+            Dim body = New Dictionary(Of String, Object) From {{"name", roomName}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "/rooms")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePostRequestAsync(url, jsonBody, token)
+            Dim json = JObject.Parse(response)
+
+            If json("success")?.ToObject(Of Boolean)() = True Then
+                Dim roomId = json("result")?("room_id")?.ToString()
+                Log($"✅ Pièce créée avec succès: {roomId}")
+                Return roomId
+            End If
+            Return Nothing
+        Catch ex As Exception
+            LogError("CreateRoomAsync", ex)
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Renomme une pièce
+    ''' </summary>
+    Public Async Function RenameRoomAsync(homeId As String, roomId As String, newName As String) As Task(Of Boolean)
+        Try
+            Dim body = New Dictionary(Of String, Object) From {{"name", newName}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "/rooms/", roomId)
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("RenameRoomAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Supprime une pièce
+    ''' </summary>
+    Public Async Function DeleteRoomAsync(homeId As String, roomId As String) As Task(Of Boolean)
+        Try
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "/rooms/", roomId)
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim response = Await ExecuteDeleteRequestAsync(url, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("DeleteRoomAsync", ex)
+            Return False
+        End Try
+    End Function
+#End Region
+
+#Region "Device Management (Extended)"
+    ''' <summary>
+    ''' Récupère tous les appareils d'un home spécifique
+    ''' </summary>
+    Public Async Function GetDevicesByHomeAsync(homeId As String) As Task(Of List(Of DeviceInfo))
+        Try
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = BuildUrl(API_VERSION_HOMES, homeId, "/devices")
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            Dim devices As New List(Of DeviceInfo)()
+            Dim result = json("result")
+            If result IsNot Nothing AndAlso TypeOf result Is JArray Then
+                For Each device In CType(result, JArray)
+                    devices.Add(ParseDeviceInfo(device))
+                Next
+            End If
+            Return devices
+        Catch ex As Exception
+            LogError("GetDevicesByHomeAsync", ex)
+            Return New List(Of DeviceInfo)()
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Déplace un appareil vers une pièce
+    ''' </summary>
+    Public Async Function MoveDeviceToRoomAsync(deviceId As String, roomId As String) As Task(Of Boolean)
+        Try
+            Dim body = New Dictionary(Of String, Object) From {{"room_id", roomId}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Dim url = BuildUrl(API_VERSION_DEVICES, deviceId, "/room")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("MoveDeviceToRoomAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Retire un appareil de sa pièce actuelle
+    ''' </summary>
+    Public Async Function RemoveDeviceFromRoomAsync(deviceId As String) As Task(Of Boolean)
+        Try
+            Dim url = BuildUrl(API_VERSION_DEVICES, deviceId, "/room")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim response = Await ExecuteDeleteRequestAsync(url, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("RemoveDeviceFromRoomAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Supprime un appareil
+    ''' </summary>
+    Public Async Function DeleteDeviceAsync(deviceId As String) As Task(Of Boolean)
+        Try
+            Dim url = BuildUrl(API_VERSION_DEVICES, deviceId)
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim response = Await ExecuteDeleteRequestAsync(url, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("DeleteDeviceAsync", ex)
+            Return False
+        End Try
+    End Function
+#End Region
+
+#Region "Automation Management"
+    ''' <summary>
+    ''' Récupère toutes les automatisations
+    ''' </summary>
+    Public Async Function GetAutomationsAsync() As Task(Of List(Of JObject))
+        Try
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = BuildUrl(API_VERSION_USERS, _cfg.Uid, "/automations")
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            Dim result = json("result")
+            If result IsNot Nothing AndAlso TypeOf result Is JArray Then
+                Return CType(result, JArray).Cast(Of JObject)().ToList()
+            End If
+            Return New List(Of JObject)()
+        Catch ex As Exception
+            LogError("GetAutomationsAsync", ex)
+            Return New List(Of JObject)()
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Crée une nouvelle automatisation
+    ''' </summary>
+    Public Async Function CreateAutomationAsync(name As String, actions As JArray, conditions As JArray) As Task(Of String)
+        Try
+            Dim body = New Dictionary(Of String, Object) From {
+                {"name", name},
+                {"actions", actions},
+                {"conditions", conditions}
+            }
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Dim url = BuildUrl(API_VERSION_USERS, _cfg.Uid, "/automations")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePostRequestAsync(url, jsonBody, token)
+            Dim json = JObject.Parse(response)
+
+            If json("success")?.ToObject(Of Boolean)() = True Then
+                Dim automationId = json("result")?("automation_id")?.ToString()
+                Log($"✅ Automatisation créée avec succès: {automationId}")
+                Return automationId
+            End If
+            Return Nothing
+        Catch ex As Exception
+            LogError("CreateAutomationAsync", ex)
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Met à jour une automatisation existante
+    ''' </summary>
+    Public Async Function UpdateAutomationAsync(automationId As String, name As String, actions As JArray, conditions As JArray) As Task(Of Boolean)
+        Try
+            Dim body = New Dictionary(Of String, Object) From {
+                {"name", name},
+                {"actions", actions},
+                {"conditions", conditions}
+            }
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Dim url = BuildUrl("/v1.0/automations/", automationId)
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("UpdateAutomationAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Supprime une automatisation
+    ''' </summary>
+    Public Async Function DeleteAutomationAsync(automationId As String) As Task(Of Boolean)
+        Try
+            Dim url = BuildUrl("/v1.0/automations/", automationId)
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim response = Await ExecuteDeleteRequestAsync(url, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("DeleteAutomationAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Active une automatisation
+    ''' </summary>
+    Public Async Function EnableAutomationAsync(automationId As String) As Task(Of Boolean)
+        Try
+            Dim body = New Dictionary(Of String, Object) From {{"enabled", True}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Dim url = BuildUrl("/v1.0/automations/", automationId, "/actions/enable")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("EnableAutomationAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Désactive une automatisation
+    ''' </summary>
+    Public Async Function DisableAutomationAsync(automationId As String) As Task(Of Boolean)
+        Try
+            Dim body = New Dictionary(Of String, Object) From {{"enabled", False}}
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Dim url = BuildUrl("/v1.0/automations/", automationId, "/actions/disable")
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePutRequestAsync(url, jsonBody, token)
+            Return ValidateResponse(response)
+        Catch ex As Exception
+            LogError("DisableAutomationAsync", ex)
+            Return False
+        End Try
+    End Function
+#End Region
 #End Region
 
 #Region "Requêtes HTTP"
@@ -445,6 +804,26 @@ Public Class TuyaApiClient
 
             If Not response.IsSuccessStatusCode Then
                 Log($"❌ Erreur API: {response.StatusCode} - {responseContent}")
+                Return responseContent
+            End If
+
+            Return responseContent
+        End Using
+    End Function
+
+    Private Async Function ExecuteDeleteRequestAsync(url As String, token As String) As Task(Of String)
+        Using client As New HttpClient()
+            Dim request = New HttpRequestMessage(HttpMethod.Delete, url)
+
+            ConfigureRequestHeaders(request, url, token, "DELETE", EMPTY_BODY_HASH)
+
+            Dim response = Await client.SendAsync(request)
+            Dim responseContent = Await response.Content.ReadAsStringAsync()
+
+            Log($"Réponse DELETE: {responseContent}")
+
+            If Not response.IsSuccessStatusCode Then
+                Log($"❌ Erreur API DELETE: {response.StatusCode} - {responseContent}")
                 Return responseContent
             End If
 
