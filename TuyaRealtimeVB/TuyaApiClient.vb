@@ -777,8 +777,19 @@ Public Class TuyaApiClient
 
     Private Function CalculateSignature(httpMethod As String, bodyHash As String, path As String,
                                        token As String, timestamp As Long, nonce As String) As String
-        Dim stringToSign = httpMethod & vbLf & bodyHash & vbLf & vbLf & path
+        ' Construire stringToSign selon le protocole Tuya :
+        ' METHOD + "\n" + ContentSHA256 + "\n" + Headers + "\n" + URL
+        Dim stringToSign = httpMethod & vbLf & bodyHash & vbLf & "" & vbLf & path
+
+        ' Construire la chaîne finale à signer :
+        ' client_id + access_token + timestamp + nonce + stringToSign
         Dim toSign = _cfg.AccessId & token & timestamp.ToString() & nonce & stringToSign
+
+        ' Debug détaillé
+        Log($"🔐 StringToSign: {stringToSign.Replace(vbLf, "\\n")}")
+        Log($"🔐 ToSign: {toSign.Replace(vbLf, "\\n").Substring(0, Math.Min(100, toSign.Length))}...")
+        Log($"🔐 AccessSecret length: {_cfg.AccessSecret.Length}")
+
         Return TuyaTokenProvider.HmacSha256Upper(toSign, _cfg.AccessSecret)
     End Function
 

@@ -39,7 +39,10 @@ Public Class TuyaTokenProvider
         End Using
     End Function
 
-    Private Function BuildStringToSign(method As String, urlPathAndQuery As String, body As String, optionalHeaders As String) As String
+    ''' <summary>
+    ''' Construit la chaîne à signer selon le protocole Tuya
+    ''' </summary>
+    Public Shared Function BuildStringToSign(method As String, urlPathAndQuery As String, body As String, optionalHeaders As String) As String
         Dim contentSha256 As String
         If String.IsNullOrEmpty(body) Then
             contentSha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ' SHA256("")
