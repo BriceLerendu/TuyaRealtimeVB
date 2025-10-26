@@ -301,37 +301,57 @@ Public Class HistoryForm
     Private Sub DrawNumericChart(stats As DeviceStatistics)
         _statsChart.Plot.Clear()
 
-        ' Extraire données
-        Dim timestamps = stats.DataPoints.Select(Function(p) p.Timestamp.ToOADate()).ToArray()
-        Dim values = stats.DataPoints.Select(Function(p) p.Value).ToArray()
+        ' Vérification de sécurité : s'assurer qu'il y a des données
+        If stats Is Nothing OrElse stats.DataPoints Is Nothing OrElse stats.DataPoints.Count = 0 Then
+            DrawNoDataMessage("Aucune donnée disponible" & vbCrLf & "pour cette période")
+            Return
+        End If
 
-        ' Créer graphique en courbe lisse
-        Dim scatter = _statsChart.Plot.Add.Scatter(timestamps, values)
-        scatter.Color = ScottPlot.Color.FromHex("#2E5BFF") ' Bleu Tuya
-        scatter.LineWidth = 2.5
-        scatter.MarkerSize = 6
-        scatter.Smooth = True ' Courbe lissée pour meilleure lisibilité
+        Try
+            ' Extraire données
+            Dim timestamps = stats.DataPoints.Select(Function(p) p.Timestamp.ToOADate()).ToArray()
+            Dim values = stats.DataPoints.Select(Function(p) p.Value).ToArray()
 
-        ' Configuration de l'axe X (temps)
-        _statsChart.Plot.Axes.DateTimeTicksBottom()
+            ' Vérification supplémentaire
+            If timestamps.Length = 0 OrElse values.Length = 0 Then
+                DrawNoDataMessage("Aucune donnée disponible" & vbCrLf & "pour cette période")
+                Return
+            End If
 
-        ' Label de l'axe Y avec unité
-        Dim yAxisLabel = GetYAxisLabel(stats.Code, stats.Unit)
-        _statsChart.Plot.Axes.Left.Label.Text = yAxisLabel
-        _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
-        _statsChart.Plot.Axes.Left.Label.FontSize = 12
-        _statsChart.Plot.Axes.Left.Label.Bold = True
+            ' Créer graphique en courbe lisse
+            Dim scatter = _statsChart.Plot.Add.Scatter(timestamps, values)
+            scatter.Color = ScottPlot.Color.FromHex("#2E5BFF") ' Bleu Tuya
+            scatter.LineWidth = 2.5
+            scatter.MarkerSize = 6
+            scatter.Smooth = True ' Courbe lissée pour meilleure lisibilité
 
-        ' Titre adapté au type de donnée
-        Dim title = GetChartTitle(stats.Code)
-        _statsChart.Plot.Title(title)
+            ' Configuration de l'axe X (temps)
+            _statsChart.Plot.Axes.DateTimeTicksBottom()
 
-        ' Style
-        _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
-        _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
-        _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+            ' Label de l'axe Y avec unité
+            Dim yAxisLabel = GetYAxisLabel(stats.Code, stats.Unit)
+            _statsChart.Plot.Axes.Left.Label.Text = yAxisLabel
+            _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
+            _statsChart.Plot.Axes.Left.Label.FontSize = 12
+            _statsChart.Plot.Axes.Left.Label.Bold = True
 
-        _statsChart.Refresh()
+            ' Titre adapté au type de donnée
+            Dim title = GetChartTitle(stats.Code)
+            _statsChart.Plot.Title(title)
+
+            ' Style
+            _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
+            _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+            _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+
+            _statsChart.Refresh()
+
+        Catch ex As Exception
+            ' En cas d'erreur lors de la création du graphique, afficher un message
+            DrawNoDataMessage("Erreur lors de l'affichage" & vbCrLf &
+                            "du graphique:" & vbCrLf &
+                            ex.Message)
+        End Try
     End Sub
 
     ''' <summary>
@@ -341,46 +361,66 @@ Public Class HistoryForm
     Private Sub DrawBinaryStateChart(stats As DeviceStatistics)
         _statsChart.Plot.Clear()
 
-        ' Extraire données
-        Dim timestamps = stats.DataPoints.Select(Function(p) p.Timestamp.ToOADate()).ToArray()
-        Dim values = stats.DataPoints.Select(Function(p) p.Value).ToArray()
+        ' Vérification de sécurité : s'assurer qu'il y a des données
+        If stats Is Nothing OrElse stats.DataPoints Is Nothing OrElse stats.DataPoints.Count = 0 Then
+            DrawNoDataMessage("Aucune donnée d'état" & vbCrLf & "pour cette période")
+            Return
+        End If
 
-        ' Créer graphique en escalier (step plot)
-        Dim scatter = _statsChart.Plot.Add.Scatter(timestamps, values)
-        scatter.Color = ScottPlot.Color.FromHex("#34C759") ' Vert iOS pour état actif
-        scatter.LineWidth = 3
-        scatter.MarkerSize = 0
-        scatter.LinePattern = ScottPlot.LinePattern.Solid
+        Try
+            ' Extraire données
+            Dim timestamps = stats.DataPoints.Select(Function(p) p.Timestamp.ToOADate()).ToArray()
+            Dim values = stats.DataPoints.Select(Function(p) p.Value).ToArray()
 
-        ' Note: FillY peut ne pas être disponible dans toutes les versions de ScottPlot
-        ' Laissons juste la ligne pour la visualisation
+            ' Vérification supplémentaire
+            If timestamps.Length = 0 OrElse values.Length = 0 Then
+                DrawNoDataMessage("Aucune donnée d'état" & vbCrLf & "pour cette période")
+                Return
+            End If
 
-        ' Configuration de l'axe X (temps)
-        _statsChart.Plot.Axes.DateTimeTicksBottom()
+            ' Créer graphique en escalier (step plot)
+            Dim scatter = _statsChart.Plot.Add.Scatter(timestamps, values)
+            scatter.Color = ScottPlot.Color.FromHex("#34C759") ' Vert iOS pour état actif
+            scatter.LineWidth = 3
+            scatter.MarkerSize = 0
+            scatter.LinePattern = ScottPlot.LinePattern.Solid
 
-        ' Configuration de l'axe Y (0 = inactif, 1 = actif)
-        _statsChart.Plot.Axes.Left.Min = -0.1
-        _statsChart.Plot.Axes.Left.Max = 1.1
-        _statsChart.Plot.Axes.Left.Label.Text = "État"
-        _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
-        _statsChart.Plot.Axes.Left.Label.FontSize = 12
-        _statsChart.Plot.Axes.Left.Label.Bold = True
+            ' Note: FillY peut ne pas être disponible dans toutes les versions de ScottPlot
+            ' Laissons juste la ligne pour la visualisation
 
-        ' Ticks personnalisés pour l'axe Y
-        Dim tickPositions As Double() = {0.0, 1.0}
-        Dim tickLabels As String() = {"Inactif", "Actif"}
-        _statsChart.Plot.Axes.Left.TickGenerator = New ScottPlot.TickGenerators.NumericManual(tickPositions, tickLabels)
+            ' Configuration de l'axe X (temps)
+            _statsChart.Plot.Axes.DateTimeTicksBottom()
 
-        ' Titre adapté
-        Dim title = GetChartTitle(stats.Code)
-        _statsChart.Plot.Title(title)
+            ' Configuration de l'axe Y (0 = inactif, 1 = actif)
+            _statsChart.Plot.Axes.Left.Min = -0.1
+            _statsChart.Plot.Axes.Left.Max = 1.1
+            _statsChart.Plot.Axes.Left.Label.Text = "État"
+            _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
+            _statsChart.Plot.Axes.Left.Label.FontSize = 12
+            _statsChart.Plot.Axes.Left.Label.Bold = True
 
-        ' Style
-        _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
-        _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
-        _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+            ' Ticks personnalisés pour l'axe Y
+            Dim tickPositions As Double() = {0.0, 1.0}
+            Dim tickLabels As String() = {"Inactif", "Actif"}
+            _statsChart.Plot.Axes.Left.TickGenerator = New ScottPlot.TickGenerators.NumericManual(tickPositions, tickLabels)
 
-        _statsChart.Refresh()
+            ' Titre adapté
+            Dim title = GetChartTitle(stats.Code)
+            _statsChart.Plot.Title(title)
+
+            ' Style
+            _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
+            _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+            _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+
+            _statsChart.Refresh()
+
+        Catch ex As Exception
+            ' En cas d'erreur lors de la création du graphique, afficher un message
+            DrawNoDataMessage("Erreur lors de l'affichage" & vbCrLf &
+                            "du graphique:" & vbCrLf &
+                            ex.Message)
+        End Try
     End Sub
 
     ''' <summary>
@@ -390,42 +430,62 @@ Public Class HistoryForm
     Private Sub DrawDiscreteEventsChart(stats As DeviceStatistics)
         _statsChart.Plot.Clear()
 
+        ' Vérification de sécurité : s'assurer qu'il y a des données
+        If stats Is Nothing OrElse stats.DataPoints Is Nothing OrElse stats.DataPoints.Count = 0 Then
+            DrawNoDataMessage("Aucun événement détecté" & vbCrLf & "pour cette période")
+            Return
+        End If
+
         ' Extraire données
         Dim values = stats.DataPoints.Select(Function(p) p.Value).ToArray()
-        Dim labels = stats.DataPoints.Select(Function(p) p.Label).ToArray()
+        Dim labels = stats.DataPoints.Select(Function(p) If(String.IsNullOrEmpty(p.Label), "N/A", p.Label)).ToArray()
         Dim positions = Enumerable.Range(0, values.Length).Select(Function(i) CDbl(i)).ToArray()
 
-        ' Créer graphique en barres
-        Dim bar = _statsChart.Plot.Add.Bars(positions, values)
-        bar.Color = ScottPlot.Color.FromHex("#FF9500") ' Orange pour attirer l'attention sur les événements
-
-        ' Configuration des axes
-        _statsChart.Plot.Axes.Bottom.TickGenerator = New ScottPlot.TickGenerators.NumericManual(
-            positions, labels
-        )
-
-        _statsChart.Plot.Axes.Bottom.MajorTickStyle.Length = 0
-        _statsChart.Plot.Axes.Left.Label.Text = "Nombre d'événements"
-        _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
-        _statsChart.Plot.Axes.Left.Label.FontSize = 12
-        _statsChart.Plot.Axes.Left.Label.Bold = True
-
-        ' Titre avec informations supplémentaires
-        Dim title = GetChartTitle(stats.Code)
-        If stats.TotalEvents > 0 Then
-            title &= $" ({stats.TotalEvents} total)"
-            If Not String.IsNullOrEmpty(stats.PeakActivityHour) Then
-                title &= $" - Pic: {stats.PeakActivityHour}"
-            End If
+        ' Vérification supplémentaire : au moins un point de données
+        If values.Length = 0 OrElse positions.Length = 0 Then
+            DrawNoDataMessage("Aucun événement détecté" & vbCrLf & "pour cette période")
+            Return
         End If
-        _statsChart.Plot.Title(title)
 
-        ' Style
-        _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
-        _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
-        _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+        Try
+            ' Créer graphique en barres
+            Dim bar = _statsChart.Plot.Add.Bars(positions, values)
+            bar.Color = ScottPlot.Color.FromHex("#FF9500") ' Orange pour attirer l'attention sur les événements
 
-        _statsChart.Refresh()
+            ' Configuration des axes
+            _statsChart.Plot.Axes.Bottom.TickGenerator = New ScottPlot.TickGenerators.NumericManual(
+                positions, labels
+            )
+
+            _statsChart.Plot.Axes.Bottom.MajorTickStyle.Length = 0
+            _statsChart.Plot.Axes.Left.Label.Text = "Nombre d'événements"
+            _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
+            _statsChart.Plot.Axes.Left.Label.FontSize = 12
+            _statsChart.Plot.Axes.Left.Label.Bold = True
+
+            ' Titre avec informations supplémentaires
+            Dim title = GetChartTitle(stats.Code)
+            If stats.TotalEvents > 0 Then
+                title &= $" ({stats.TotalEvents} total)"
+                If Not String.IsNullOrEmpty(stats.PeakActivityHour) Then
+                    title &= $" - Pic: {stats.PeakActivityHour}"
+                End If
+            End If
+            _statsChart.Plot.Title(title)
+
+            ' Style
+            _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
+            _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+            _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+
+            _statsChart.Refresh()
+
+        Catch ex As Exception
+            ' En cas d'erreur lors de la création du graphique, afficher un message
+            DrawNoDataMessage("Erreur lors de l'affichage" & vbCrLf &
+                            "du graphique:" & vbCrLf &
+                            ex.Message)
+        End Try
     End Sub
 
     ''' <summary>

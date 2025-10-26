@@ -331,8 +331,22 @@ Public Class TuyaHistoryService
 
             Select Case vizType
                 Case SensorVisualizationType.DiscreteEvents
-                    ' Événements ponctuels: compter les occurrences par heure
-                    Dim grouped = relevantLogs _
+                    ' Événements ponctuels: compter seulement les détections actives (pas les "none", "clear", etc.)
+                    ' Filtrer pour ne garder que les événements de détection
+                    Dim detectionLogs = relevantLogs _
+                        .Where(Function(l)
+                                   Dim v = l.Value?.ToLower()
+                                   ' Garder les événements de détection, ignorer "none", "clear", "0", "false"
+                                   Return Not String.IsNullOrEmpty(v) AndAlso
+                                          v <> "none" AndAlso v <> "clear" AndAlso
+                                          v <> "0" AndAlso v <> "false" AndAlso v <> "off"
+                               End Function) _
+                        .ToList()
+
+                    Log($"  📊 Événements de détection filtrés: {detectionLogs.Count}/{relevantLogs.Count}")
+
+                    ' Grouper par heure et compter
+                    Dim grouped = detectionLogs _
                         .GroupBy(Function(l) New DateTime(l.EventTime.Year, l.EventTime.Month, l.EventTime.Day, l.EventTime.Hour, 0, 0)) _
                         .Select(Function(g) New StatisticPoint With {
                             .Timestamp = g.Key,
@@ -343,7 +357,7 @@ Public Class TuyaHistoryService
                         .ToList()
 
                     hourlyStats = grouped
-                    totalEvents = relevantLogs.Count
+                    totalEvents = detectionLogs.Count
                     If grouped.Count > 0 Then
                         Dim maxPoint = grouped.OrderByDescending(Function(p) p.Value).First()
                         peakHour = maxPoint.Label
@@ -847,11 +861,30 @@ Public Class TuyaHistoryService
     Private Function DetermineEventType(code As String, value As String) As String
         If String.IsNullOrEmpty(code) Then Return "unknown"
 
-        Select Case code.ToLower()
+        Dim codeLower = code.ToLower()
+        Dim valueLower = value?.ToLower()
+
+        ' Capteurs de mouvement et détection
+        If codeLower.Contains("pir") OrElse codeLower.Contains("motion") Then
+            Return If(valueLower = "pir" OrElse valueLower = "motion" OrElse valueLower = "detected", "motion_detected", "motion_clear")
+        End If
+
+        ' Capteurs de fumée
+        If codeLower.Contains("smoke") Then
+            Return If(valueLower?.Contains("alarm") OrElse valueLower = "1", "smoke_detected", "smoke_clear")
+        End If
+
+        ' Capteurs de porte/fenêtre
+        If codeLower.Contains("door") OrElse codeLower.Contains("contact") OrElse codeLower.Contains("window") Then
+            Return If(valueLower = "true" OrElse valueLower = "1" OrElse valueLower = "open", "door_open", "door_closed")
+        End If
+
+        ' Switch
+        Select Case codeLower
             Case "switch_led", "switch", "switch_1", "switch_2"
-                Return If(value = "true" Or value = "1", "switch_on", "switch_off")
+                Return If(valueLower = "true" OrElse valueLower = "1", "switch_on", "switch_off")
             Case "online"
-                Return If(value = "true", "online", "offline")
+                Return If(valueLower = "true", "online", "offline")
             Case Else
                 Return "status_change"
         End Select
@@ -870,6 +903,18 @@ Public Class TuyaHistoryService
                 Return "✅ En ligne"
             Case "offline"
                 Return "❌ Hors ligne"
+            Case "motion_detected"
+                Return "🚶 Mouvement détecté"
+            Case "motion_clear"
+                Return "⚪ Pas de mouvement"
+            Case "smoke_detected"
+                Return "🔥 Fumée détectée !"
+            Case "smoke_clear"
+                Return "✅ Pas de fumée"
+            Case "door_open"
+                Return "🚪 Ouvert"
+            Case "door_closed"
+                Return "🔒 Fermé"
             Case Else
                 Return $"{code} = {value}"
         End Select
