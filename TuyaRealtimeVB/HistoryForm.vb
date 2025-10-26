@@ -284,9 +284,6 @@ Public Class HistoryForm
         ' Titre adapté au type de donnée
         Dim title = GetChartTitle(stats.Code)
         _statsChart.Plot.Title(title)
-        _statsChart.Plot.Title.Label.FontSize = 14
-        _statsChart.Plot.Title.Label.Bold = True
-        _statsChart.Plot.Title.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
 
         ' Style
         _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
@@ -314,8 +311,8 @@ Public Class HistoryForm
         scatter.MarkerSize = 0
         scatter.LinePattern = ScottPlot.LinePattern.Solid
 
-        ' Remplir la zone sous la courbe pour mieux visualiser l'état actif
-        Dim fill = _statsChart.Plot.Add.FillY(timestamps, values, ScottPlot.Color.FromHex("#34C759").WithAlpha(0.2))
+        ' Note: FillY peut ne pas être disponible dans toutes les versions de ScottPlot
+        ' Laissons juste la ligne pour la visualisation
 
         ' Configuration de l'axe X (temps)
         _statsChart.Plot.Axes.DateTimeTicksBottom()
@@ -336,9 +333,6 @@ Public Class HistoryForm
         ' Titre adapté
         Dim title = GetChartTitle(stats.Code)
         _statsChart.Plot.Title(title)
-        _statsChart.Plot.Title.Label.FontSize = 14
-        _statsChart.Plot.Title.Label.Bold = True
-        _statsChart.Plot.Title.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
 
         ' Style
         _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
@@ -384,9 +378,6 @@ Public Class HistoryForm
             End If
         End If
         _statsChart.Plot.Title(title)
-        _statsChart.Plot.Title.Label.FontSize = 14
-        _statsChart.Plot.Title.Label.Bold = True
-        _statsChart.Plot.Title.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
 
         ' Style
         _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
