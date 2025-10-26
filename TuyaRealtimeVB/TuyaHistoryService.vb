@@ -1,6 +1,5 @@
 Imports System
 Imports System.Net.Http
-Imports Newtonsoft.Json
 Imports Newtonsoft.Json.Linq
 
 ''' <summary>
@@ -16,129 +15,93 @@ Public Class TuyaHistoryService
     End Sub
 
     ''' <summary>
-    ''' Récupère les statistiques d'un appareil sur une période en essayant plusieurs codes
+    ''' Récupère les statistiques d'un appareil sur une période
     ''' </summary>
+    ''' <param name="deviceId">ID de l'appareil</param>
+    ''' <param name="period">Période de temps à récupérer</param>
+    ''' <param name="code">Code de la propriété (ex: "cur_power", "va_temperature")</param>
+    ''' <param name="category">Catégorie de l'appareil pour déterminer l'unité</param>
     Public Async Function GetDeviceStatisticsAsync(
         deviceId As String,
         period As HistoryPeriod,
-        Optional code As String = "cur_power"
-    ) As Task(Of DeviceStatistics)
-        ' Essayer le code spécifié d'abord
-        Dim stats = Await GetDeviceStatisticsForCodeAsync(deviceId, period, code)
-
-        ' Si aucune donnée, essayer d'autres codes courants
-        If stats Is Nothing OrElse stats.DataPoints.Count = 0 Then
-            Log($"🔄 Tentative avec d'autres codes courants...")
-            Dim alternativeCodes = {"add_ele", "cur_voltage", "cur_current", "switch_1"}
-
-            For Each altCode In alternativeCodes
-                If altCode <> code Then
-                    stats = Await GetDeviceStatisticsForCodeAsync(deviceId, period, altCode)
-                    If stats IsNot Nothing AndAlso stats.DataPoints.Count > 0 Then
-                        Log($"✅ Données trouvées avec le code '{altCode}'!")
-                        Exit For
-                    End If
-                End If
-            Next
-        End If
-
-        Return stats
-    End Function
-
-    ''' <summary>
-    ''' Récupère les statistiques pour un code spécifique
-    ''' </summary>
-    Private Async Function GetDeviceStatisticsForCodeAsync(
-        deviceId As String,
-        period As HistoryPeriod,
-        code As String
+        code As String,
+        category As String
     ) As Task(Of DeviceStatistics)
 
         Try
-            Dim endDate = DateTime.Now.Date
-            Dim startDate As DateTime
+            Dim endTime = DateTime.Now
+            Dim startTime As DateTime
 
             ' Définir la période
             Select Case period
                 Case HistoryPeriod.Last24Hours
-                    startDate = endDate.AddDays(-1)
+                    startTime = endTime.AddHours(-24)
                 Case HistoryPeriod.Last7Days
-                    startDate = endDate.AddDays(-7)
+                    startTime = endTime.AddDays(-7)
                 Case HistoryPeriod.Last30Days
-                    startDate = endDate.AddDays(-30)
+                    startTime = endTime.AddDays(-30)
                 Case Else
-                    startDate = endDate.AddDays(-7)
+                    startTime = endTime.AddDays(-7)
             End Select
 
-            ' Convertir en format yyyyMMdd (selon documentation Tuya)
-            Dim startDay = startDate.ToString("yyyyMMdd")
-            Dim endDay = endDate.ToString("yyyyMMdd")
+            ' Convertir en timestamps Unix (millisecondes)
+            Dim startTimestamp = CLng((startTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
+            Dim endTimestamp = CLng((endTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
 
-            ' Endpoint API Tuya pour statistiques par jours
+            ' Endpoint API Tuya pour statistiques
             Dim endpoint = $"/v1.0/devices/{deviceId}/statistics/days"
-            Dim queryParams = $"?code={code}&start_day={startDay}&end_day={endDay}&stat_type=sum"
+            Dim queryParams = $"?code={code}&start_time={startTimestamp}&end_time={endTimestamp}&type=sum"
 
-            Log($"Récupération statistiques: {deviceId}, période: {period} ({startDay} → {endDay})")
+            Log($"Récupération statistiques: {deviceId}, code: {code}, période: {period}")
 
             ' Appel API
             Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
 
-            ' Log de la réponse complète pour débogage
-            If response IsNot Nothing Then
-                Log($"📥 Réponse API: {response.ToString(Formatting.None)}")
-            Else
-                Log($"❌ Réponse API est Nothing")
-            End If
-
             If response IsNot Nothing AndAlso response("success")?.ToObject(Of Boolean)() = True Then
                 Dim result = response("result")
+
+                ' Obtenir l'unité depuis le TuyaCategoryManager
+                Dim unit = TuyaCategoryManager.Instance.GetPropertyUnit(category, code)
+                If String.IsNullOrEmpty(unit) Then
+                    ' Unités par défaut selon le code
+                    unit = GetDefaultUnit(code)
+                End If
 
                 Dim stats As New DeviceStatistics With {
                     .DeviceId = deviceId,
                     .StatType = "sum",
                     .Code = code,
-                    .Unit = "kWh",
+                    .Unit = unit,
                     .DataPoints = New List(Of StatisticPoint)
                 }
 
                 ' Parser les points de données
-                ' Format réponse: { "result": { "days": { "20190101": "0.5", "20190102": "1.2" } } }
-                If result IsNot Nothing Then
-                    Dim daysData = TryCast(result("days"), JObject)
-                    If daysData IsNot Nothing Then
-                        For Each prop As JProperty In daysData.Properties()
-                            Dim dateKey = prop.Name  ' Format: "yyyyMMdd"
-                            Dim valueStr = prop.Value?.ToString()
+                If result IsNot Nothing AndAlso TypeOf result Is JArray Then
+                    For Each item As JToken In CType(result, JArray)
+                        Dim jItem = CType(item, JObject)
+                        Dim timestamp = jItem("time")?.ToObject(Of Long)()
+                        Dim value = jItem("value")?.ToString()
 
-                            If Not String.IsNullOrEmpty(dateKey) AndAlso Not String.IsNullOrEmpty(valueStr) Then
-                                ' Parser la date (format yyyyMMdd)
-                                Dim dt As DateTime
-                                If DateTime.TryParseExact(dateKey, "yyyyMMdd", Nothing,
-                                                         Globalization.DateTimeStyles.None, dt) Then
-                                    Dim value As Double
-                                    If Double.TryParse(valueStr, Globalization.NumberStyles.Any,
-                                                      Globalization.CultureInfo.InvariantCulture, value) Then
-                                        stats.DataPoints.Add(New StatisticPoint With {
-                                            .Timestamp = dt,
-                                            .Value = value,
-                                            .Label = dt.ToString("dd/MM")
-                                        })
-                                    End If
-                                End If
+                        If timestamp.HasValue AndAlso Not String.IsNullOrEmpty(value) Then
+                            Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
+
+                            ' Convertir la valeur en tenant compte du diviseur
+                            Dim numValue As Double = 0
+                            If Double.TryParse(value, numValue) Then
+                                ' Appliquer la conversion depuis la config
+                                numValue = ApplyPropertyConversion(category, code, numValue)
                             End If
-                        Next
-                    End If
+
+                            stats.DataPoints.Add(New StatisticPoint With {
+                                .Timestamp = dt,
+                                .Value = numValue,
+                                .Label = dt.ToString("dd/MM")
+                            })
+                        End If
+                    Next
                 End If
 
-                ' Trier par date
-                stats.DataPoints.Sort(Function(a, b) a.Timestamp.CompareTo(b.Timestamp))
-
-                If stats.DataPoints.Count = 0 Then
-                    Log($"⚠️ 0 points de données pour le code '{code}'. L'appareil ne mesure peut-être pas cette donnée.")
-                    Log($"💡 Essayez avec d'autres codes: add_ele, cur_voltage, cur_current")
-                Else
-                    Log($"✅ {stats.DataPoints.Count} points de données récupérés pour '{code}'")
-                End If
+                Log($"✅ {stats.DataPoints.Count} points de données récupérés")
                 Return stats
             Else
                 Dim errorMsg = If(response?("msg")?.ToString(), "Erreur inconnue")
@@ -150,6 +113,61 @@ Public Class TuyaHistoryService
             Log($"❌ Exception GetDeviceStatisticsAsync: {ex.Message}")
             Return Nothing
         End Try
+    End Function
+
+    ''' <summary>
+    ''' Applique la conversion d'une propriété (ex: diviseur)
+    ''' </summary>
+    Private Function ApplyPropertyConversion(category As String, code As String, value As Double) As Double
+        Try
+            Dim propertyConfig = TuyaCategoryManager.Instance.GetConfiguration()("categories")?(category)?("properties")?(code)
+
+            If propertyConfig IsNot Nothing Then
+                Dim conversion = propertyConfig("conversion")?.ToString()
+
+                Select Case conversion
+                    Case "divide"
+                        Dim divisor = propertyConfig("divisor")?.ToObject(Of Double)()
+                        If divisor.HasValue AndAlso divisor.Value > 0 Then
+                            Return value / divisor.Value
+                        End If
+                    Case "multiply"
+                        Dim multiplier = propertyConfig("multiplier")?.ToObject(Of Double)()
+                        If multiplier.HasValue Then
+                            Return value * multiplier.Value
+                        End If
+                End Select
+            End If
+
+        Catch ex As Exception
+            Debug.WriteLine($"Erreur ApplyPropertyConversion: {ex.Message}")
+        End Try
+
+        Return value
+    End Function
+
+    ''' <summary>
+    ''' Obtient une unité par défaut selon le code de propriété
+    ''' </summary>
+    Private Function GetDefaultUnit(code As String) As String
+        Select Case code.ToLower()
+            Case "cur_power"
+                Return "W"
+            Case "cur_voltage"
+                Return "V"
+            Case "cur_current"
+                Return "A"
+            Case "add_ele"
+                Return "kWh"
+            Case "va_temperature", "temp_current", "temp_set"
+                Return "°C"
+            Case "humidity_value", "humidity", "battery_percentage"
+                Return "%"
+            Case "switch", "doorcontact_state", "pir"
+                Return "état"
+            Case Else
+                Return "valeur"
+        End Select
     End Function
 
     ''' <summary>
