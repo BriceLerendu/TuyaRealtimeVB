@@ -460,10 +460,10 @@ Public Class TuyaHistoryService
             Dim endpoint = $"/v1.0/devices/{deviceId}/logs"
             Dim allLogs As New List(Of DeviceLog)
 
-            ' FREE EDITION: start_row_key= doit être présent (même vide) selon exemple doc
             ' type=7 : Data point reported (OBLIGATOIRE selon doc Tuya)
             ' size=100 : L'API limite à 100 de toute façon
-            Dim queryParams = $"?start_row_key=&type=7&start_time={startTimestamp}&end_time={endTimestamp}&size=100"
+            ' Format qui FONCTIONNAIT dans commit 84005b4 (pas de start_row_key)
+            Dim queryParams = $"?start_time={startTimestamp}&end_time={endTimestamp}&size=100&type=7"
 
             Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
 
