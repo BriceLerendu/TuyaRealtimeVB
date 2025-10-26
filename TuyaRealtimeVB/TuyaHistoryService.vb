@@ -31,17 +31,56 @@ Public Class TuyaHistoryService
 #Region "Statistiques avec cache et optimisation"
 
     ''' <summary>
+    ''' Récupère la liste de tous les codes DP (data points) disponibles pour un appareil
+    ''' </summary>
+    Public Async Function GetAvailableCodesAsync(
+        deviceId As String,
+        period As HistoryPeriod
+    ) As Task(Of List(Of String))
+
+        Try
+            ' Récupérer les logs pour analyser les codes disponibles
+            Dim logs = Await GetDeviceLogsAsync(deviceId, period)
+
+            If logs Is Nothing OrElse logs.Count = 0 Then
+                Log($"⚠️ Aucun log disponible pour détecter les codes DP")
+                Return New List(Of String)
+            End If
+
+            ' Extraire tous les codes DP uniques des logs et les trier
+            Dim availableCodes = logs.Where(Function(l) Not String.IsNullOrEmpty(l.Code)) _
+                                    .Select(Function(l) l.Code) _
+                                    .Distinct() _
+                                    .OrderBy(Function(c) c) _
+                                    .ToList()
+
+            Log($"🔍 Codes DP disponibles: {String.Join(", ", availableCodes)}")
+
+            Return availableCodes
+
+        Catch ex As Exception
+            Log($"❌ Exception GetAvailableCodesAsync: {ex.Message}")
+            Return New List(Of String)
+        End Try
+    End Function
+
+    ''' <summary>
     ''' Récupère les statistiques d'un appareil avec cache et stratégie multi-codes intelligente
     ''' OPTIMISÉ: Arrêt dès qu'on trouve des données, cache local, limitation des appels API
     ''' </summary>
     Public Async Function GetDeviceStatisticsAsync(
         deviceId As String,
-        period As HistoryPeriod
+        period As HistoryPeriod,
+        Optional specificCode As String = Nothing
     ) As Task(Of DeviceStatistics)
 
         Try
+            ' Adapter la clé de cache si un code spécifique est demandé
+            Dim cacheKey = If(String.IsNullOrEmpty(specificCode),
+                            $"{deviceId}_{period}",
+                            $"{deviceId}_{period}_{specificCode}")
+
             ' Vérifier le cache d'abord
-            Dim cacheKey = $"{deviceId}_{period}"
             If _statisticsCache.ContainsKey(cacheKey) Then
                 Dim cached = _statisticsCache(cacheKey)
                 If (DateTime.Now - cached.Timestamp).TotalMinutes < CACHE_TTL_MINUTES Then
@@ -54,7 +93,29 @@ Public Class TuyaHistoryService
                 End If
             End If
 
-            ' Essayer les codes par ordre de priorité (arrêt dès succès)
+            ' Si un code spécifique est demandé, l'essayer directement
+            If Not String.IsNullOrEmpty(specificCode) Then
+                Log($"🎯 Récupération des statistiques pour code spécifique '{specificCode}'...")
+
+                Dim stats = Await GetDeviceStatisticsForCodeAsync(deviceId, period, specificCode)
+
+                If stats IsNot Nothing AndAlso stats.DataPoints.Count > 0 Then
+                    Log($"✅ Données trouvées avec '{specificCode}' ({stats.DataPoints.Count} points)")
+
+                    ' Mettre en cache
+                    _statisticsCache(cacheKey) = New CachedStatistics With {
+                        .Data = stats,
+                        .Timestamp = DateTime.Now
+                    }
+
+                    Return stats
+                Else
+                    Log($"⚠️ Aucune donnée disponible pour le code '{specificCode}'")
+                    Return Nothing
+                End If
+            End If
+
+            ' Si aucun code spécifique, essayer les codes par ordre de priorité (arrêt dès succès)
             For Each code In _electricityCodesPriority
                 Log($"🔍 Essai code '{code}' pour {deviceId}...")
 

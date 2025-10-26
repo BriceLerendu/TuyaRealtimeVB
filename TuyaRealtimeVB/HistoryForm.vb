@@ -17,12 +17,15 @@ Public Class HistoryForm
 
     ' Contrôles UI
     Private _periodComboBox As ComboBox
+    Private _propertyComboBox As ComboBox
     Private _chartPanel As Panel
     Private _statsChart As FormsPlot
     Private _logsListView As ListView
     Private _loadingLabel As System.Windows.Forms.Label
     Private _closeButton As Button
     Private _refreshButton As Button
+    Private _availableCodes As List(Of String)
+    Private _selectedCode As String = Nothing
 
     Public Sub New(deviceId As String, deviceName As String, historyService As TuyaHistoryService)
         _deviceId = deviceId
@@ -85,9 +88,29 @@ Public Class HistoryForm
         AddHandler _periodComboBox.SelectedIndexChanged, AddressOf PeriodComboBox_SelectedIndexChanged
         headerPanel.Controls.Add(_periodComboBox)
 
+        ' Sélecteur de propriété
+        Dim propertyLabel As New System.Windows.Forms.Label With {
+            .Text = "Propriété :",
+            .Location = New Point(310, 18),
+            .AutoSize = True,
+            .Font = New Font("Segoe UI", 10, WinFontStyle.Bold),
+            .ForeColor = WinColor.FromArgb(28, 28, 30)
+        }
+        headerPanel.Controls.Add(propertyLabel)
+
+        _propertyComboBox = New ComboBox With {
+            .Location = New Point(395, 15),
+            .Size = New Size(250, 25),
+            .Font = New Font("Segoe UI", 10),
+            .DropDownStyle = ComboBoxStyle.DropDownList,
+            .Enabled = False
+        }
+        AddHandler _propertyComboBox.SelectedIndexChanged, AddressOf PropertyComboBox_SelectedIndexChanged
+        headerPanel.Controls.Add(_propertyComboBox)
+
         _refreshButton = New Button With {
             .Text = "🔄 Actualiser",
-            .Location = New Point(310, 14),
+            .Location = New Point(665, 14),
             .Size = New Size(120, 30),
             .Font = New Font("Segoe UI", 9, WinFontStyle.Bold),
             .BackColor = WinColor.FromArgb(0, 122, 255),
@@ -101,7 +124,7 @@ Public Class HistoryForm
 
         _loadingLabel = New System.Windows.Forms.Label With {
             .Text = "Chargement...",
-            .Location = New Point(450, 18),
+            .Location = New Point(805, 18),
             .AutoSize = True,
             .Font = New Font("Segoe UI", 9, WinFontStyle.Italic),
             .ForeColor = WinColor.FromArgb(128, 128, 128),
@@ -194,10 +217,27 @@ Public Class HistoryForm
         Try
             _loadingLabel.Visible = True
             _periodComboBox.Enabled = False
+            _propertyComboBox.Enabled = False
             _refreshButton.Enabled = False
 
-            ' Charger statistiques et logs en parallèle
-            Dim statsTask = _historyService.GetDeviceStatisticsAsync(_deviceId, _currentPeriod)
+            ' 1. Charger la liste des codes disponibles si pas encore fait
+            If _availableCodes Is Nothing OrElse _availableCodes.Count = 0 Then
+                _availableCodes = Await _historyService.GetAvailableCodesAsync(_deviceId, _currentPeriod)
+
+                If _availableCodes IsNot Nothing AndAlso _availableCodes.Count > 0 Then
+                    ' Remplir le ComboBox avec les codes disponibles
+                    _propertyComboBox.Items.Clear()
+                    _propertyComboBox.Items.Add("(Auto-détection)")
+                    For Each code In _availableCodes
+                        _propertyComboBox.Items.Add(code)
+                    Next
+                    _propertyComboBox.SelectedIndex = 0 ' Sélectionner auto-détection par défaut
+                    _propertyComboBox.Enabled = True
+                End If
+            End If
+
+            ' 2. Charger statistiques et logs en parallèle
+            Dim statsTask = _historyService.GetDeviceStatisticsAsync(_deviceId, _currentPeriod, _selectedCode)
             Dim logsTask = _historyService.GetDeviceLogsAsync(_deviceId, _currentPeriod)
 
             Await Task.WhenAll(statsTask, logsTask)
@@ -205,17 +245,17 @@ Public Class HistoryForm
             Dim stats = Await statsTask
             Dim logs = Await logsTask
 
-            ' Afficher graphique
+            ' 3. Afficher graphique
             If stats IsNot Nothing AndAlso stats.DataPoints.Count > 0 Then
                 DrawStatisticsChart(stats)
             Else
-                Dim codeInfo = If(stats?.Code, "cur_power")
+                Dim codeInfo = If(_selectedCode, If(stats?.Code, "aucun code"))
                 DrawNoDataMessage("Aucune donnée disponible" & vbCrLf &
                                  "Code: " & codeInfo & vbCrLf &
-                                 "Consultez les logs du dashboard")
+                                 "Essayez de sélectionner une autre propriété")
             End If
 
-            ' Afficher timeline
+            ' 4. Afficher timeline
             If logs IsNot Nothing AndAlso logs.Count > 0 Then
                 DisplayLogs(logs)
             Else
@@ -234,6 +274,7 @@ Public Class HistoryForm
         Finally
             _loadingLabel.Visible = False
             _periodComboBox.Enabled = True
+            _propertyComboBox.Enabled = True
             _refreshButton.Enabled = True
         End Try
     End Sub
@@ -501,10 +542,60 @@ Public Class HistoryForm
 
     Private Sub PeriodComboBox_SelectedIndexChanged(sender As Object, e As EventArgs)
         _currentPeriod = CType(_periodComboBox.SelectedIndex, HistoryPeriod)
+        ' Réinitialiser la liste des codes quand on change de période
+        _availableCodes = Nothing
+        _selectedCode = Nothing
         LoadHistoryAsync()
     End Sub
 
+    Private Sub PropertyComboBox_SelectedIndexChanged(sender As Object, e As EventArgs)
+        If _propertyComboBox.SelectedIndex <= 0 Then
+            ' Auto-détection
+            _selectedCode = Nothing
+        Else
+            ' Code spécifique sélectionné
+            _selectedCode = _propertyComboBox.SelectedItem.ToString()
+        End If
+
+        ' Recharger uniquement le graphique (pas besoin de recharger la liste des codes)
+        LoadChartOnlyAsync()
+    End Sub
+
+    Private Async Sub LoadChartOnlyAsync()
+        Try
+            _loadingLabel.Visible = True
+            _propertyComboBox.Enabled = False
+            _periodComboBox.Enabled = False
+            _refreshButton.Enabled = False
+
+            ' Charger les statistiques pour le code sélectionné
+            Dim stats = Await _historyService.GetDeviceStatisticsAsync(_deviceId, _currentPeriod, _selectedCode)
+
+            ' Afficher le graphique
+            If stats IsNot Nothing AndAlso stats.DataPoints.Count > 0 Then
+                DrawStatisticsChart(stats)
+            Else
+                Dim codeInfo = If(_selectedCode, "auto-détection")
+                DrawNoDataMessage("Aucune donnée disponible" & vbCrLf &
+                                 "Code: " & codeInfo & vbCrLf &
+                                 "Essayez de sélectionner une autre propriété")
+            End If
+
+        Catch ex As Exception
+            MessageBox.Show($"Erreur lors du chargement du graphique:{vbCrLf}{ex.Message}",
+                          "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        Finally
+            _loadingLabel.Visible = False
+            _propertyComboBox.Enabled = True
+            _periodComboBox.Enabled = True
+            _refreshButton.Enabled = True
+        End Try
+    End Sub
+
     Private Sub RefreshButton_Click(sender As Object, e As EventArgs)
+        ' Réinitialiser la liste des codes pour forcer une nouvelle détection
+        _availableCodes = Nothing
+        _selectedCode = Nothing
         LoadHistoryAsync()
     End Sub
 End Class
