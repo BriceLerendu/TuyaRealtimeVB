@@ -436,6 +436,8 @@ Public Class TuyaHistoryService
 
                 Log($"  ✅ {uniqueLogs.Count} logs uniques après {sliceCount} tranches ({allLogs.Count - uniqueLogs.Count} doublons retirés)")
                 Return uniqueLogs
+            Else
+                Log($"  ⚠️ 0 logs après {sliceCount} tranches")
             End If
 
             Return Nothing
@@ -464,25 +466,44 @@ Public Class TuyaHistoryService
 
             Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
 
-            If response IsNot Nothing AndAlso response("success")?.ToObject(Of Boolean)() = True Then
-                Dim result = response("result")
+            ' 🔍 DIAGNOSTIC: Vérifier la réponse de l'API
+            If response Is Nothing Then
+                Log($"    ⚠️ API v1.0 response = null")
+                Return Nothing
+            End If
 
-                ' Parser les logs (structure variable)
-                Dim logsArray As JArray = Nothing
+            Dim success = response("success")?.ToObject(Of Boolean)()
+            If Not success.HasValue OrElse Not success.Value Then
+                Dim msg = response("msg")?.ToString()
+                Log($"    ⚠️ API v1.0 success = false, msg = {msg}")
+                Return Nothing
+            End If
 
-                If result IsNot Nothing Then
-                    If TypeOf result Is JObject Then
-                        Dim resultObj = CType(result, JObject)
-                        If resultObj("logs") IsNot Nothing Then
-                            logsArray = CType(resultObj("logs"), JArray)
-                        End If
-                    ElseIf TypeOf result Is JArray Then
-                        logsArray = CType(result, JArray)
-                    End If
+            Dim result = response("result")
+            If result Is Nothing Then
+                Log($"    ⚠️ API v1.0 result = null")
+                Return Nothing
+            End If
+
+            ' Parser les logs (structure variable)
+            Dim logsArray As JArray = Nothing
+
+            If TypeOf result Is JObject Then
+                Dim resultObj = CType(result, JObject)
+                If resultObj("logs") IsNot Nothing Then
+                    logsArray = CType(resultObj("logs"), JArray)
+                Else
+                    Log($"    ⚠️ API v1.0 result.logs n'existe pas. Keys: {String.Join(", ", resultObj.Properties().Select(Function(p) p.Name))}")
                 End If
+            ElseIf TypeOf result Is JArray Then
+                logsArray = CType(result, JArray)
+            Else
+                Log($"    ⚠️ API v1.0 result type inconnu: {result.GetType().Name}")
+            End If
 
-                If logsArray IsNot Nothing Then
-                    For Each item As JToken In logsArray
+            If logsArray IsNot Nothing Then
+                Log($"    📊 API v1.0 retourné {logsArray.Count} logs")
+                For Each item As JToken In logsArray
                         Dim jItem = CType(item, JObject)
                         Dim timestamp = jItem("event_time")?.ToObject(Of Long)()
                         Dim code = jItem("code")?.ToString()
@@ -502,13 +523,15 @@ Public Class TuyaHistoryService
                                 .Description = description
                             })
                         End If
-                    Next
-                End If
+                Next
+            Else
+                Log($"    ⚠️ API v1.0 logsArray = null")
             End If
 
             Return If(allLogs.Count > 0, allLogs, Nothing)
 
         Catch ex As Exception
+            Log($"    ❌ Exception GetDeviceLogsV1Async: {ex.Message}")
             Return Nothing
         End Try
     End Function
