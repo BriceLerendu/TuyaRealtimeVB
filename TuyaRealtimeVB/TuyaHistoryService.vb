@@ -18,13 +18,18 @@ Public Class TuyaHistoryService
     ''' <summary>
     ''' Récupère les statistiques d'un appareil sur une période en essayant plusieurs codes
     ''' </summary>
+    ''' <param name="deviceId">ID de l'appareil</param>
+    ''' <param name="period">Période de temps</param>
+    ''' <param name="code">Code de la propriété (ex: "cur_power", "va_temperature")</param>
+    ''' <param name="category">Catégorie de l'appareil (pour unité et conversion)</param>
     Public Async Function GetDeviceStatisticsAsync(
         deviceId As String,
         period As HistoryPeriod,
-        Optional code As String = "cur_power"
+        code As String,
+        category As String
     ) As Task(Of DeviceStatistics)
         ' Essayer le code spécifié d'abord
-        Dim stats = Await GetDeviceStatisticsForCodeAsync(deviceId, period, code)
+        Dim stats = Await GetDeviceStatisticsForCodeAsync(deviceId, period, code, category)
 
         ' Si aucune donnée, essayer d'autres codes courants
         If stats Is Nothing OrElse stats.DataPoints.Count = 0 Then
@@ -33,7 +38,7 @@ Public Class TuyaHistoryService
 
             For Each altCode In alternativeCodes
                 If altCode <> code Then
-                    stats = Await GetDeviceStatisticsForCodeAsync(deviceId, period, altCode)
+                    stats = Await GetDeviceStatisticsForCodeAsync(deviceId, period, altCode, category)
                     If stats IsNot Nothing AndAlso stats.DataPoints.Count > 0 Then
                         Log($"✅ Données trouvées avec le code '{altCode}'!")
                         Exit For
@@ -51,7 +56,8 @@ Public Class TuyaHistoryService
     Private Async Function GetDeviceStatisticsForCodeAsync(
         deviceId As String,
         period As HistoryPeriod,
-        code As String
+        code As String,
+        category As String
     ) As Task(Of DeviceStatistics)
 
         Try
@@ -93,11 +99,18 @@ Public Class TuyaHistoryService
             If response IsNot Nothing AndAlso response("success")?.ToObject(Of Boolean)() = True Then
                 Dim result = response("result")
 
+                ' Obtenir l'unité depuis le TuyaCategoryManager
+                Dim unit = TuyaCategoryManager.Instance.GetPropertyUnit(category, code)
+                If String.IsNullOrEmpty(unit) Then
+                    ' Unité par défaut selon le code
+                    unit = GetDefaultUnit(code)
+                End If
+
                 Dim stats As New DeviceStatistics With {
                     .DeviceId = deviceId,
                     .StatType = "sum",
                     .Code = code,
-                    .Unit = "kWh",
+                    .Unit = unit,
                     .DataPoints = New List(Of StatisticPoint)
                 }
 
@@ -118,6 +131,9 @@ Public Class TuyaHistoryService
                                     Dim value As Double
                                     If Double.TryParse(valueStr, Globalization.NumberStyles.Any,
                                                       Globalization.CultureInfo.InvariantCulture, value) Then
+                                        ' Appliquer la conversion depuis la config
+                                        value = ApplyPropertyConversion(category, code, value)
+
                                         stats.DataPoints.Add(New StatisticPoint With {
                                             .Timestamp = dt,
                                             .Value = value,
@@ -150,6 +166,61 @@ Public Class TuyaHistoryService
             Log($"❌ Exception GetDeviceStatisticsAsync: {ex.Message}")
             Return Nothing
         End Try
+    End Function
+
+    ''' <summary>
+    ''' Applique la conversion d'une propriété (ex: diviseur)
+    ''' </summary>
+    Private Function ApplyPropertyConversion(category As String, code As String, value As Double) As Double
+        Try
+            Dim propertyConfig = TuyaCategoryManager.Instance.GetConfiguration()("categories")?(category)?("properties")?(code)
+
+            If propertyConfig IsNot Nothing Then
+                Dim conversion = propertyConfig("conversion")?.ToString()
+
+                Select Case conversion
+                    Case "divide"
+                        Dim divisor = propertyConfig("divisor")?.ToObject(Of Double)()
+                        If divisor.HasValue AndAlso divisor.Value > 0 Then
+                            Return value / divisor.Value
+                        End If
+                    Case "multiply"
+                        Dim multiplier = propertyConfig("multiplier")?.ToObject(Of Double)()
+                        If multiplier.HasValue Then
+                            Return value * multiplier.Value
+                        End If
+                End Select
+            End If
+
+        Catch ex As Exception
+            Debug.WriteLine($"Erreur ApplyPropertyConversion: {ex.Message}")
+        End Try
+
+        Return value
+    End Function
+
+    ''' <summary>
+    ''' Obtient une unité par défaut selon le code de propriété
+    ''' </summary>
+    Private Function GetDefaultUnit(code As String) As String
+        Select Case code.ToLower()
+            Case "cur_power"
+                Return "W"
+            Case "cur_voltage"
+                Return "V"
+            Case "cur_current"
+                Return "A"
+            Case "add_ele"
+                Return "kWh"
+            Case "va_temperature", "temp_current", "temp_set"
+                Return "°C"
+            Case "humidity_value", "humidity", "battery_percentage"
+                Return "%"
+            Case "switch", "doorcontact_state", "pir"
+                Return "état"
+            Case Else
+                Return "valeur"
+        End Select
     End Function
 
     ''' <summary>

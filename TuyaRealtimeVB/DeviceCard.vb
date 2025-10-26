@@ -40,8 +40,8 @@ Public Class DeviceCard
     Private ReadOnly _lockObject As New Object()
     Private _lastUpdateTime As DateTime = DateTime.MinValue
     Private _apiClient As TuyaApiClient
-    Private _logCallback As Action(Of String)
     Private ReadOnly _rawValues As New Dictionary(Of String, String)  ' ✅ NOUVEAU
+    Private _historyService As TuyaHistoryService  ' Service d'historique
 #End Region
 
 #Region "Champs privés - Contrôles UI"
@@ -52,7 +52,7 @@ Public Class DeviceCard
     Private _timestampLabel As Label
     Private _statusFooter As Panel
     Private _iconLabel As Label
-    Private _historyButton As Button
+    Private _historyButton As Button  ' Bouton historique
     Private ReadOnly _properties As New Dictionary(Of String, Label)
     Private ReadOnly _propertyCodes As New Dictionary(Of Label, String)
 #End Region
@@ -66,16 +66,11 @@ Public Class DeviceCard
     Private _originalBorderColor As Color
     Private _originalBackgroundColor As Color
     Private _isFlashing As Boolean = False
-
-    ' Debouncing des mises à jour UI
-    Private _updateTimer As Timer
-    Private ReadOnly _pendingUpdates As New Dictionary(Of String, String)
 #End Region
 
 #Region "Champs privés - Managers"
     Private Shared ReadOnly _deviceCategories As TuyaDeviceCategories = TuyaDeviceCategories.GetInstance()
     Private Shared ReadOnly _categoryManager As TuyaCategoryManager = TuyaCategoryManager.Instance
-    Private Shared ReadOnly _displayPreferencesManager As DisplayPreferencesManager = DisplayPreferencesManager.Instance
 #End Region
 
 #Region "Propriétés publiques"
@@ -84,28 +79,11 @@ Public Class DeviceCard
             Return _deviceName
         End Get
     End Property
-
-    Public ReadOnly Property Category As String
-        Get
-            Return _category
-        End Get
-    End Property
-
-    ''' <summary>
-    ''' Retourne la liste de tous les codes de propriétés connus (incluant les sous-propriétés)
-    ''' </summary>
-    Public Function GetAllKnownPropertyCodes() As List(Of String)
-        SyncLock _lockObject
-            Return _rawValues.Keys.ToList()
-        End SyncLock
-    End Function
 #End Region
 
 #Region "Initialisation"
-    Public Sub New(deviceId As String, apiClient As TuyaApiClient, Optional logCallback As Action(Of String) = Nothing)
+    Public Sub New(deviceId As String)
         _deviceId = deviceId
-        _apiClient = apiClient
-        _logCallback = logCallback
         ConfigurePanel()
         InitializeControls()
         InitializeFlashTimer()
@@ -123,52 +101,14 @@ Public Class DeviceCard
         AddHandler Me.Click, AddressOf OnCardClick
     End Sub
 
-    Protected Overrides Sub Dispose(disposing As Boolean)
-        If disposing Then
-            ' Nettoyer les event handlers
-            RemoveHandler Me.Paint, AddressOf OnPaintCard
-            RemoveHandler Me.Click, AddressOf OnCardClick
-
-            ' Nettoyer le flash timer
-            If _flashTimer IsNot Nothing Then
-                RemoveHandler _flashTimer.Tick, AddressOf FlashTimer_Tick
-                _flashTimer.Stop()
-                _flashTimer.Dispose()
-                _flashTimer = Nothing
-            End If
-
-            ' Nettoyer le update timer (debounce)
-            If _updateTimer IsNot Nothing Then
-                RemoveHandler _updateTimer.Tick, AddressOf UpdateTimer_Tick
-                _updateTimer.Stop()
-                _updateTimer.Dispose()
-                _updateTimer = Nothing
-            End If
-
-            ' Nettoyer les contrôles
-            For Each ctrl As Control In Me.Controls
-                ctrl.Dispose()
-            Next
-
-            ' Nettoyer les dictionnaires
-            _properties.Clear()
-            _propertyCodes.Clear()
-            _rawValues.Clear()
-            _pendingUpdates.Clear()
-        End If
-
-        MyBase.Dispose(disposing)
-    End Sub
-
     Private Sub InitializeControls()
         _iconLabel = CreateIconLabel()
         _titleLabel = CreateTitleLabel()
         _idLabel = CreateIdLabel()
         _roomLabel = CreateRoomLabel()
-        _historyButton = CreateHistoryButton()
         _statusFooter = CreateFooter()
 
-        Me.Controls.AddRange({_iconLabel, _titleLabel, _idLabel, _roomLabel, _historyButton, _statusFooter})
+        Me.Controls.AddRange({_iconLabel, _titleLabel, _idLabel, _roomLabel, _statusFooter})
     End Sub
 
     Private Function CreateIconLabel() As Label
@@ -188,12 +128,11 @@ Public Class DeviceCard
     Private Function CreateTitleLabel() As Label
         Dim label = New Label With {
             .Location = New Point(65, 18),
-            .Size = New Size(200, 24),
+            .Size = New Size(240, 24),
             .Font = New Font("Segoe UI", 12, FontStyle.Bold),
             .BackColor = Color.Transparent,
             .ForeColor = Color.FromArgb(28, 28, 30),
-            .Text = "Chargement...",
-            .AutoEllipsis = True
+            .Text = "Chargement..."
         }
         AddHandler label.Click, AddressOf OnCardClick
         Return label
@@ -225,24 +164,6 @@ Public Class DeviceCard
         Return label
     End Function
 
-    Private Function CreateHistoryButton() As Button
-        Dim button = New Button With {
-            .Text = "📊",
-            .Location = New Point(CARD_WIDTH - 40, 15),
-            .Size = New Size(32, 32),
-            .Font = New Font("Segoe UI Emoji", 11),
-            .BackColor = Color.FromArgb(0, 122, 255),
-            .ForeColor = Color.White,
-            .FlatStyle = FlatStyle.Flat,
-            .Cursor = Cursors.Hand,
-            .TabStop = False
-        }
-        button.FlatAppearance.BorderSize = 0
-        button.FlatAppearance.BorderColor = Color.FromArgb(0, 122, 255)
-        AddHandler button.Click, AddressOf OnHistoryButtonClick
-        Return button
-    End Function
-
     Private Function CreateFooter() As Panel
         Dim footer = New Panel With {
             .Dock = DockStyle.Bottom,
@@ -260,6 +181,23 @@ Public Class DeviceCard
         }
         footer.Controls.Add(_statusLabel)
 
+        ' Bouton historique
+        _historyButton = New Button With {
+            .Text = "📊",
+            .Font = New Font("Segoe UI Emoji", 10),
+            .Size = New Size(30, 26),
+            .FlatStyle = FlatStyle.Flat,
+            .BackColor = Color.FromArgb(0, 119, 255),
+            .ForeColor = Color.White,
+            .Cursor = Cursors.Hand,
+            .TabStop = False,
+            .Visible = False
+        }
+        _historyButton.FlatAppearance.BorderSize = 0
+        _historyButton.FlatAppearance.BorderColor = Color.FromArgb(0, 119, 255)
+        AddHandler _historyButton.Click, AddressOf OnHistoryButton_Click
+        footer.Controls.Add(_historyButton)
+
         _timestampLabel = New Label With {
             .Text = "🕐 --:--:--",
             .Font = New Font("Segoe UI", 8),
@@ -270,8 +208,13 @@ Public Class DeviceCard
         footer.Controls.Add(_timestampLabel)
 
         AddHandler footer.Resize, Sub(sender, e)
+                                      ' Positionner le bouton historique à droite (avant le timestamp)
+                                      _historyButton.Location = New Point(
+                                          footer.Width - _historyButton.Width - 10, 4)
+
+                                      ' Positionner le timestamp juste avant le bouton historique
                                       _timestampLabel.Location = New Point(
-                                          footer.Width - _timestampLabel.Width - 15, 10)
+                                          footer.Width - _timestampLabel.Width - _historyButton.Width - 18, 10)
                                   End Sub
 
         Return footer
@@ -280,29 +223,6 @@ Public Class DeviceCard
     Private Sub InitializeFlashTimer()
         _flashTimer = New Timer With {.Interval = FLASH_INTERVAL}
         AddHandler _flashTimer.Tick, AddressOf FlashTimer_Tick
-
-        ' Initialiser le timer de debounce (100ms)
-        _updateTimer = New Timer With {.Interval = 100}
-        AddHandler _updateTimer.Tick, AddressOf UpdateTimer_Tick
-    End Sub
-
-    Private Sub UpdateTimer_Tick(sender As Object, e As EventArgs)
-        _updateTimer.Stop()
-
-        SyncLock _lockObject
-            Try
-                ' Appliquer toutes les mises à jour en attente
-                For Each kvp In _pendingUpdates
-                    UpdatePropertyInternal(kvp.Key, kvp.Value)
-                Next
-                _pendingUpdates.Clear()
-            Catch ex As Exception
-                Debug.WriteLine($"Erreur UpdateTimer_Tick: {ex.Message}")
-            End Try
-        End SyncLock
-
-        ' Un seul invalidate pour toutes les mises à jour
-        Me.Invalidate()
     End Sub
 #End Region
 
@@ -477,118 +397,27 @@ Public Class DeviceCard
             Return
         End If
 
-        ' OPTIMISÉ : Debouncing - accumuler les mises à jour
         SyncLock _lockObject
             Try
-                ' Stocker la valeur brute
+                ' ✅ Stocker la valeur brute
                 _rawValues(code) = value
 
-                ' ✅ NOUVEAU: Détecter si la valeur est du JSON et l'exploser en sous-propriétés
-                If IsJsonValue(value) Then
-                    ExpandJsonProperty(code, value)
-                    Return
+                If Not _properties.ContainsKey(code) Then
+                    CreateNewProperty(code, value)
+                Else
+                    UpdateExistingProperty(code, value)
                 End If
-
-                ' ✅ NOUVEAU: Vérifier si la propriété doit être affichée selon les préférences
-                If Not _displayPreferencesManager.IsPropertyVisible(_category, code) Then
-                    ' Propriété masquée par préférences - ne pas afficher
-                    ' Mais si elle était déjà affichée, la retirer
-                    If _properties.ContainsKey(code) Then
-                        RemoveProperty(code)
-                    End If
-                    Return
-                End If
-
-                ' OPTIMISÉ: Debouncing - ajouter aux mises à jour en attente au lieu de mettre à jour immédiatement
-                _pendingUpdates(code) = value
-
-                ' Redémarrer le timer de debounce
-                _updateTimer.Stop()
-                _updateTimer.Start()
             Catch ex As Exception
-                Debug.WriteLine($"Erreur UpdateProperty: {ex.Message}")
+                Debug.WriteLine(String.Format("Erreur UpdateProperty: {0}", ex.Message))
             End Try
         End SyncLock
-    End Sub
 
-    Private Sub UpdatePropertyInternal(code As String, value As String)
-        ' Méthode interne appelée par le timer de debounce
-        Try
-            If Not _properties.ContainsKey(code) Then
-                CreateNewProperty(code, value)
-            Else
-                UpdateExistingProperty(code, value)
-            End If
-
-            StartFlashEffect()
-        Catch ex As Exception
-            Debug.WriteLine($"Erreur UpdatePropertyInternal: {ex.Message}")
-        End Try
-    End Sub
-
-    ''' <summary>
-    ''' Vérifie si une valeur est du JSON
-    ''' </summary>
-    Private Function IsJsonValue(value As String) As Boolean
-        If String.IsNullOrWhiteSpace(value) Then Return False
-        Dim trimmed = value.Trim()
-        Return (trimmed.StartsWith("{") AndAlso trimmed.EndsWith("}")) OrElse
-               (trimmed.StartsWith("[") AndAlso trimmed.EndsWith("]"))
-    End Function
-
-    ''' <summary>
-    ''' Explose une propriété JSON en sous-propriétés individuelles
-    ''' </summary>
-    Private Sub ExpandJsonProperty(parentCode As String, jsonValue As String)
-        Try
-            Dim jsonObj = Newtonsoft.Json.Linq.JObject.Parse(jsonValue)
-
-            ' Parcourir chaque propriété du JSON
-            For Each prop In jsonObj.Properties()
-                Dim subPropertyCode = $"{parentCode}.{prop.Name}"
-                Dim subPropertyValue = prop.Value.ToString()
-
-                ' Stocker la sous-propriété
-                _rawValues(subPropertyCode) = subPropertyValue
-
-                ' Vérifier si la sous-propriété doit être affichée
-                If _displayPreferencesManager.IsPropertyVisible(_category, subPropertyCode) Then
-                    If Not _properties.ContainsKey(subPropertyCode) Then
-                        CreateNewProperty(subPropertyCode, subPropertyValue)
-                    Else
-                        UpdateExistingProperty(subPropertyCode, subPropertyValue)
-                    End If
-                Else
-                    ' Retirer si elle était affichée
-                    If _properties.ContainsKey(subPropertyCode) Then
-                        RemoveProperty(subPropertyCode)
-                    End If
-                End If
-            Next
-
-            Debug.WriteLine($"✓ Propriété JSON '{parentCode}' explosée en {jsonObj.Properties().Count()} sous-propriétés")
-        Catch ex As Exception
-            Debug.WriteLine($"✗ Erreur ExpandJsonProperty pour '{parentCode}': {ex.Message}")
-            ' En cas d'erreur, traiter comme une propriété normale
-            _rawValues(parentCode) = jsonValue
-        End Try
+        StartFlashEffect()
     End Sub
 
     Private Sub CreateNewProperty(code As String, value As String)
-        ' ✅ MODIFIÉ: Vérifier d'abord les préférences pour la limite
-        Dim visibleProps = _displayPreferencesManager.GetVisibleProperties(_category)
-        Dim maxProperties As Integer
-
-        ' Si des préférences existent, respecter la limite définie
-        If visibleProps IsNot Nothing AndAlso visibleProps.Count > 0 Then
-            maxProperties = visibleProps.Count
-        Else
-            ' Comportement par défaut: max 5 propriétés
-            maxProperties = MAX_PROPERTIES
-        End If
-
         ' Limiter le nombre de propriétés affichées
-        If _properties.Count >= maxProperties Then Return
+        If _properties.Count >= MAX_PROPERTIES Then Return
 
         Dim yPos = PROPERTY_Y_START + (_properties.Count * PROPERTY_HEIGHT)
         If yPos > PROPERTY_Y_MAX Then Return
@@ -651,7 +480,7 @@ Public Class DeviceCard
     End Function
 
     Private Function CreatePropertyValueLabel(code As String, value As String) As Label
-        Dim formattedValue = _categoryManager.FormatValueWithScale(_category, _deviceId, code, value, _apiClient)
+        Dim formattedValue = _categoryManager.FormatValue(_category, code, value)
 
         Dim label = New Label With {
             .Location = New Point(155, 2),
@@ -669,7 +498,7 @@ Public Class DeviceCard
     End Function
 
     Private Sub UpdateExistingProperty(code As String, value As String)
-        _properties(code).Text = _categoryManager.FormatValueWithScale(_category, _deviceId, code, value, _apiClient)
+        _properties(code).Text = _categoryManager.FormatValue(_category, code, value)
 
         ' Mettre à jour la couleur pour les switches
         If code.Contains("switch") OrElse code = "doorcontact_state" Then
@@ -679,44 +508,7 @@ Public Class DeviceCard
         End If
     End Sub
 
-    Private Sub RemoveProperty(code As String)
-        Try
-            If _properties.ContainsKey(code) Then
-                Dim valueLabel = _properties(code)
-                Dim parentPanel = valueLabel.Parent
-
-                ' Retirer le panel parent de la carte
-                If parentPanel IsNot Nothing Then
-                    Me.Controls.Remove(parentPanel)
-                    parentPanel.Dispose()
-                End If
-
-                ' Nettoyer les dictionnaires
-                _properties.Remove(code)
-                If _propertyCodes.ContainsKey(valueLabel) Then
-                    _propertyCodes.Remove(valueLabel)
-                End If
-
-                Debug.WriteLine($"✓ Propriété '{code}' retirée de l'affichage")
-            End If
-        Catch ex As Exception
-            Debug.WriteLine($"✗ Erreur RemoveProperty pour '{code}': {ex.Message}")
-        End Try
-    End Sub
-
     Private Function GetPropertyIcon(code As String) As String
-        ' Pour les sous-propriétés JSON (ex: phase_a.electricCurrent)
-        If code.Contains(".") Then
-            Dim subPropertyName = code.Substring(code.IndexOf(".") + 1).ToLower()
-            If subPropertyName.Contains("current") OrElse subPropertyName = "electriccurrent" Then Return "🔌"
-            If subPropertyName.Contains("voltage") Then Return "🔋"
-            If subPropertyName.Contains("power") Then Return "⚡"
-            If subPropertyName.Contains("temperature") Then Return "🌡️"
-            If subPropertyName.Contains("humidity") Then Return "💧"
-            If subPropertyName.Contains("energy") Then Return "📊"
-        End If
-
-        ' Propriétés normales
         If code.Contains("temperature") OrElse code = "va_temperature" Then Return "🌡️"
         If code.Contains("humidity") OrElse code = "humidity_value" Then Return "💧"
         If code.Contains("power") OrElse code.EndsWith("_P") Then Return "⚡"
@@ -730,25 +522,19 @@ Public Class DeviceCard
     End Function
 
     Private Sub SetPropertyColor(code As String, label As Label)
-        ' Pour les sous-propriétés JSON (ex: phase_a.electricCurrent)
-        Dim checkCode = code
-        If code.Contains(".") Then
-            checkCode = code.Substring(code.IndexOf(".") + 1)
-        End If
-
-        If checkCode.Contains("temperature") OrElse checkCode = "va_temperature" Then
+        If code.Contains("temperature") OrElse code = "va_temperature" Then
             label.ForeColor = Color.FromArgb(255, 149, 0)
-        ElseIf checkCode.Contains("humidity") OrElse checkCode = "humidity_value" Then
+        ElseIf code.Contains("humidity") OrElse code = "humidity_value" Then
             label.ForeColor = Color.FromArgb(0, 122, 255)
-        ElseIf checkCode.Contains("power") OrElse checkCode.EndsWith("_P") Then
+        ElseIf code.Contains("power") OrElse code.EndsWith("_P") Then
             label.ForeColor = Color.FromArgb(175, 82, 222)
-        ElseIf checkCode.Contains("current") OrElse checkCode.EndsWith("_I") OrElse checkCode.ToLower() = "electriccurrent" Then
+        ElseIf code.Contains("current") OrElse code.EndsWith("_I") Then
             label.ForeColor = Color.FromArgb(255, 149, 0)
-        ElseIf checkCode.Contains("voltage") OrElse checkCode.EndsWith("_V") Then
+        ElseIf code.Contains("voltage") OrElse code.EndsWith("_V") Then
             label.ForeColor = Color.FromArgb(0, 122, 255)
-        ElseIf checkCode.Contains("battery") Then
+        ElseIf code.Contains("battery") Then
             label.ForeColor = Color.FromArgb(52, 199, 89)
-        ElseIf checkCode.Contains("energy") OrElse checkCode = "add_ele" Then
+        ElseIf code.Contains("energy") OrElse code = "add_ele" Then
             label.ForeColor = Color.FromArgb(0, 122, 255)
         Else
             label.ForeColor = Color.FromArgb(28, 28, 30)
@@ -766,32 +552,25 @@ Public Class DeviceCard
 
         SyncLock _lockObject
             Try
-                ' ✅ NOUVELLE APPROCHE: Recréer toutes les propriétés depuis zéro
-                ' Cela permet de gérer l'ajout/suppression de propriétés selon les préférences
+                ' Rafraîchir toutes les propriétés avec leurs valeurs brutes stockées
+                For Each code As String In _rawValues.Keys.ToList()
+                    If _properties.ContainsKey(code) Then
+                        Dim rawValue As String = _rawValues(code)
+                        Dim valueLabel As Label = _properties(code)
 
-                ' 1. Retirer toutes les propriétés actuellement affichées
-                Dim propertiesToRemove = _properties.Keys.ToList()
-                For Each code In propertiesToRemove
-                    RemoveProperty(code)
-                Next
+                        ' Reformater avec la nouvelle configuration
+                        valueLabel.Text = _categoryManager.FormatValue(_category, code, rawValue)
 
-                ' 2. Recréer toutes les propriétés selon les nouvelles préférences
-                ' Parcourir _rawValues et appeler UpdateProperty pour chaque code
-                For Each kvp In _rawValues.ToList()
-                    Dim code = kvp.Key
-                    Dim value = kvp.Value
-
-                    ' UpdateProperty gère automatiquement les préférences d'affichage
-                    ' Il ne créera la propriété que si elle doit être visible
-                    If Not _properties.ContainsKey(code) Then
-                        ' Vérifier si la propriété doit être affichée selon les préférences
-                        If _displayPreferencesManager.IsPropertyVisible(_category, code) Then
-                            CreateNewProperty(code, value)
+                        ' Mettre à jour le panneau parent
+                        Dim parentPanel As Panel = TryCast(valueLabel.Parent, Panel)
+                        If parentPanel IsNot Nothing Then
+                            UpdatePropertyName(parentPanel, code)
+                            UpdatePropertyIcon(parentPanel, code)
                         End If
                     End If
                 Next
 
-                Debug.WriteLine(String.Format("✓ DeviceCard {0} rafraîchie: {1} propriétés affichées", _deviceName, _properties.Count))
+                Debug.WriteLine(String.Format("✓ DeviceCard {0} rafraîchie", _deviceName))
             Catch ex As Exception
                 Debug.WriteLine(String.Format("✗ Erreur RefreshDisplay: {0}", ex.Message))
             End Try
@@ -958,6 +737,64 @@ Public Class DeviceCard
 #End Region
 
 #Region "Interaction utilisateur"
+    Public Sub SetApiClient(apiClient As TuyaApiClient)
+        _apiClient = apiClient
+    End Sub
+
+    ''' <summary>
+    ''' Configure le service d'historique et affiche le bouton
+    ''' </summary>
+    Public Sub SetHistoryService(historyService As TuyaHistoryService)
+        _historyService = historyService
+
+        ' Afficher le bouton historique si le service est disponible
+        If _historyButton IsNot Nothing Then
+            _historyButton.Visible = True
+        End If
+    End Sub
+
+    Private Sub OnHistoryButton_Click(sender As Object, e As EventArgs)
+        ' Empêcher la propagation du clic à la carte
+        If TypeOf sender Is Button Then
+            Dim btn = CType(sender, Button)
+            ' Ne pas propager l'événement
+        End If
+
+        ' Ouvrir la fenêtre d'historique
+        If _historyService IsNot Nothing Then
+            ' Obtenir les propriétés disponibles pour cette catégorie
+            Dim availableProperties = TuyaCategoryManager.Instance.GetHistoricalProperties(_category)
+
+            ' Si aucune propriété configurée, essayer d'en déduire des propriétés actuellement affichées
+            If availableProperties.Count = 0 Then
+                ' Utiliser les propriétés actuellement affichées sur la carte
+                For Each kvp In _properties
+                    Dim code = _propertyCodes(kvp.Value)
+                    Dim displayName = TuyaCategoryManager.Instance.GetDisplayName(_category, code)
+                    availableProperties(code) = displayName
+                Next
+            End If
+
+            ' Si toujours aucune propriété, fallback sur cur_power
+            If availableProperties.Count = 0 Then
+                availableProperties("cur_power") = "⚡ Puissance"
+            End If
+
+            ' Créer et afficher la fenêtre d'historique
+            Dim historyForm As New HistoryForm(
+                _deviceId,
+                _deviceName,
+                _category,
+                _historyService,
+                availableProperties
+            )
+            historyForm.ShowDialog()
+        Else
+            MessageBox.Show("Le service d'historique n'est pas disponible.",
+                          "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End If
+    End Sub
+
     Private Sub OnCardClick(sender As Object, e As EventArgs)
         If _apiClient Is Nothing Then
             MessageBox.Show("API Client non initialisé", "Erreur",
@@ -966,26 +803,6 @@ Public Class DeviceCard
         End If
 
         ShowContextMenu()
-    End Sub
-
-    Private Sub OnHistoryButtonClick(sender As Object, e As EventArgs)
-        If _apiClient Is Nothing Then
-            MessageBox.Show("API Client non initialisé", "Erreur",
-                          MessageBoxButtons.OK, MessageBoxIcon.Warning)
-            Return
-        End If
-
-        Try
-            ' Créer le service d'historique avec le callback de log
-            Dim historyService As New TuyaHistoryService(_apiClient, _logCallback)
-
-            ' Ouvrir la fenêtre d'historique
-            Dim historyForm As New HistoryForm(_deviceId, _deviceName, historyService)
-            historyForm.ShowDialog()
-        Catch ex As Exception
-            MessageBox.Show($"Erreur lors de l'ouverture de l'historique:{vbCrLf}{ex.Message}",
-                          "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
-        End Try
     End Sub
 
     Private Sub ShowContextMenu()
