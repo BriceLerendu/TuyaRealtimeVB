@@ -979,32 +979,8 @@ Public Class DeviceCard
             ' Créer le service d'historique avec le callback de log
             Dim historyService As New TuyaHistoryService(_apiClient, _logCallback)
 
-            ' Obtenir les propriétés disponibles pour cette catégorie
-            Dim availableProperties = TuyaCategoryManager.Instance.GetHistoricalProperties(_category)
-
-            ' Si aucune propriété configurée, essayer d'en déduire des propriétés actuellement affichées
-            If availableProperties.Count = 0 Then
-                ' Utiliser les propriétés actuellement affichées sur la carte
-                For Each kvp In _properties
-                    Dim code = _propertyCodes(kvp.Value)
-                    Dim displayName = TuyaCategoryManager.Instance.GetDisplayName(_category, code)
-                    availableProperties(code) = displayName
-                Next
-            End If
-
-            ' Si toujours aucune propriété, fallback sur cur_power
-            If availableProperties.Count = 0 Then
-                availableProperties("cur_power") = "⚡ Puissance"
-            End If
-
-            ' Créer et afficher la fenêtre d'historique
-            Dim historyForm As New HistoryForm(
-                _deviceId,
-                _deviceName,
-                _category,
-                historyService,
-                availableProperties
-            )
+            ' Ouvrir la fenêtre d'historique
+            Dim historyForm As New HistoryForm(_deviceId, _deviceName, historyService)
             historyForm.ShowDialog()
         Catch ex As Exception
             MessageBox.Show($"Erreur lors de l'ouverture de l'historique:{vbCrLf}{ex.Message}",
