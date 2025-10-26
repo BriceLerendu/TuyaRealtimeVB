@@ -400,14 +400,15 @@ Public Class TuyaHistoryService
             ' CONTOURNEMENT PAGINATION TUYA : L'API retourne max 100 logs par appel
             ' Solution: diviser en tranches de 2h pour toutes les périodes
             ' 24h = 12 tranches, 7j = 84 tranches, 30j = 360 tranches
-            Dim sliceSizeMs As Long = 2 * 60 * 60 * 1000  ' 2 heures pour toutes les périodes
+            ' ✅ CORRECTION: Taille en SECONDES (pas millisecondes!) car timestamps sont en secondes
+            Dim sliceSizeSeconds As Long = 2 * 60 * 60  ' 2 heures en secondes
 
             Dim currentStart As Long = startTimestamp
             Dim sliceCount As Integer = 0
 
             While currentStart < endTimestamp
                 sliceCount += 1
-                Dim currentEnd As Long = Math.Min(currentStart + sliceSizeMs, endTimestamp)
+                Dim currentEnd As Long = Math.Min(currentStart + sliceSizeSeconds, endTimestamp)
 
                 ' Appeler l'API pour cette tranche spécifique (sans pagination)
                 Dim sliceLogs = Await GetDeviceLogsV1Async(deviceId, currentStart, currentEnd)
