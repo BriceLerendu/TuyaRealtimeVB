@@ -57,7 +57,7 @@ Public Class AutomationEditorForm
     Private _lblMatchTypeExplanation As Label
 
     ' Données
-    Private _devices As JArray = New JArray()
+    Private _devices As List(Of DeviceInfo) = New List(Of DeviceInfo)()
     Public Property AutomationResult As JObject = Nothing
 #End Region
 
@@ -791,7 +791,7 @@ End Class
 Public Class ConditionControl
     Inherits Panel
 
-    Private _devices As JArray
+    Private _devices As List(Of DeviceInfo)
     Private _cboDevice As ComboBox
     Private _cboProperty As ComboBox
     Private _cboOperator As ComboBox
@@ -1312,7 +1312,7 @@ End Class
 Public Class ActionControl
     Inherits Panel
 
-    Private _devices As JArray
+    Private _devices As List(Of DeviceInfo)
     Private _cboDevice As ComboBox
     Private _cboProperty As ComboBox
 

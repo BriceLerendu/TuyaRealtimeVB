@@ -702,7 +702,7 @@ Public Class HomeAdminForm
                 UpdateStatus("Déplacement de l'appareil...")
                 Console.WriteLine($"🖱️ DRAG & DROP: {sourceData.Name} → {targetData.Name}")
 
-                success = Await _apiClient.MoveDeviceToRoomAsync(sourceData.HomeId, sourceData.Id, targetData.Id, _preloadedDevices)
+                success = Await _apiClient.MoveDeviceToRoomAsync(sourceData.Id, targetData.Id)
 
                 If success Then
                     ' Mettre à jour le cache
@@ -731,7 +731,7 @@ Public Class HomeAdminForm
                 UpdateStatus("Retrait de l'appareil de sa pièce...")
                 Console.WriteLine($"🖱️ DRAG & DROP: {sourceData.Name} → Racine de {targetData.Name}")
 
-                success = Await _apiClient.RemoveDeviceFromRoomAsync(sourceData.HomeId, sourceData.RoomId, sourceData.Id, _preloadedDevices)
+                success = Await _apiClient.RemoveDeviceFromRoomAsync(sourceData.Id)
 
                 If success Then
                     ' Mettre à jour le cache
@@ -1128,7 +1128,7 @@ Public Class HomeAdminForm
                 Console.WriteLine($"🔍 DEBUG: Retrait device {nodeData.Id} de sa room {nodeData.RoomId} (vers racine home {nodeData.HomeId})")
 
                 ' Appeler l'API pour retirer le device de sa room en passant les infos nécessaires
-                success = Await _apiClient.RemoveDeviceFromRoomAsync(nodeData.HomeId, nodeData.RoomId, nodeData.Id, _preloadedDevices)
+                success = Await _apiClient.RemoveDeviceFromRoomAsync(nodeData.Id)
 
                 If success Then
                     Console.WriteLine("⚡ Mise à jour locale du cache (instantané)...")
@@ -1226,7 +1226,7 @@ Public Class HomeAdminForm
                 Console.WriteLine($"🔍 DEBUG: Déplacement device {nodeData.Id} vers room {targetRoomId} dans home {nodeData.HomeId}")
 
                 ' Appeler l'API en passant le cache pour éviter un rechargement complet
-                success = Await _apiClient.MoveDeviceToRoomAsync(nodeData.HomeId, nodeData.Id, targetRoomId, _preloadedDevices)
+                success = Await _apiClient.MoveDeviceToRoomAsync(nodeData.Id, targetRoomId)
 
                 If success Then
                     Console.WriteLine("⚡ Mise à jour locale du cache (instantané)...")

@@ -216,7 +216,7 @@ Public Class DisplayPreferencesForm
     ''' </summary>
     Private Sub LoadCategoriesFromCache()
         Try
-            Dim categories = _apiClient.GetCachedCategories()
+            Dim categories As List(Of String) = _apiClient.GetCachedCategories()
             If categories Is Nothing OrElse categories.Count = 0 Then
                 MessageBox.Show("Aucune catégorie trouvée dans le cache." & Environment.NewLine &
                               "Veuillez d'abord charger les appareils depuis le dashboard.",
@@ -225,13 +225,13 @@ Public Class DisplayPreferencesForm
             End If
 
             ' Charger les propriétés de chaque catégorie
-            For Each category In categories
+            For Each category As String In categories
                 LoadCategoryProperties(category)
             Next
 
             ' Créer la liste d'affichage pour le ComboBox
             Dim categoryDisplayItems As New List(Of CategoryDisplayItem)
-            For Each category In categories
+            For Each category As String In categories
                 Dim deviceInfo = _deviceCategories.GetDeviceInfo(category)
                 categoryDisplayItems.Add(New CategoryDisplayItem With {
                     .Category = category,
@@ -260,7 +260,7 @@ Public Class DisplayPreferencesForm
     ''' </summary>
     Private Sub LoadCategoryProperties(category As String)
         Try
-            Dim specs = _apiClient.GetCachedSpecificationByCategory(category)
+            Dim specs As JObject = _apiClient.GetCachedSpecificationByCategory(category)
             If specs Is Nothing Then
                 Debug.WriteLine($"⚠️ Aucune spécification trouvée pour la catégorie '{category}'")
                 Return
@@ -270,7 +270,7 @@ Public Class DisplayPreferencesForm
 
             ' Extraire les propriétés depuis "status"
             If specs("status") IsNot Nothing Then
-                For Each statusItem In CType(specs("status"), JArray)
+                For Each statusItem As JToken In CType(specs("status"), JArray)
                     Dim code = statusItem("code")?.ToString()
                     Dim name = statusItem("name")?.ToString()
                     Dim type = statusItem("type")?.ToString()
@@ -288,7 +288,7 @@ Public Class DisplayPreferencesForm
 
             ' Extraire les propriétés depuis "functions"
             If specs("functions") IsNot Nothing Then
-                For Each funcItem In CType(specs("functions"), JArray)
+                For Each funcItem As JToken In CType(specs("functions"), JArray)
                     Dim code = funcItem("code")?.ToString()
                     Dim name = funcItem("name")?.ToString()
                     Dim type = funcItem("type")?.ToString()
@@ -310,8 +310,8 @@ Public Class DisplayPreferencesForm
             ' ✅ NOUVEAU: Ajouter les propriétés dynamiques découvertes dans les DeviceCard
             ' Cela inclut les sous-propriétés JSON (ex: phase_a.electricCurrent)
             If _dashboardForm IsNot Nothing Then
-                Dim knownProperties = _dashboardForm.GetKnownPropertiesForCategory(category)
-                For Each code In knownProperties
+                Dim knownProperties As HashSet(Of String) = _dashboardForm.GetKnownPropertiesForCategory(category)
+                For Each code As String In knownProperties
                     ' Vérifier si la propriété n'est pas déjà dans la liste
                     If Not properties.Any(Function(p) p.Code = code) Then
                         ' Utiliser le CategoryManager pour obtenir le nom d'affichage
@@ -378,10 +378,10 @@ Public Class DisplayPreferencesForm
     ''' </summary>
     Private Sub CategoryComboBox_SelectedIndexChanged(sender As Object, e As EventArgs)
         Try
-            Dim selectedItem = TryCast(_categoryComboBox.SelectedItem, CategoryDisplayItem)
+            Dim selectedItem As CategoryDisplayItem = TryCast(_categoryComboBox.SelectedItem, CategoryDisplayItem)
             If selectedItem Is Nothing Then Return
 
-            Dim category = selectedItem.Category
+            Dim category As String = selectedItem.Category
             LoadPropertiesForCategory(category)
         Catch ex As Exception
             Debug.WriteLine($"✗ Erreur CategoryComboBox_SelectedIndexChanged: {ex.Message}")
@@ -398,14 +398,14 @@ Public Class DisplayPreferencesForm
             Return
         End If
 
-        Dim properties = _categoriesProperties(category)
-        Dim visibleProps = _preferencesManager.GetVisibleProperties(category)
-        Dim propertyOrder = _preferencesManager.GetPropertyOrder(category)
+        Dim properties As List(Of PropertyInfo) = _categoriesProperties(category)
+        Dim visibleProps As List(Of String) = _preferencesManager.GetVisibleProperties(category)
+        Dim propertyOrder As List(Of String) = _preferencesManager.GetPropertyOrder(category)
 
         ' Si un ordre est défini, l'utiliser
         If propertyOrder IsNot Nothing AndAlso propertyOrder.Count > 0 Then
             ' Ajouter d'abord les propriétés dans l'ordre défini
-            For Each code In propertyOrder
+            For Each code As String In propertyOrder
                 Dim prop = properties.FirstOrDefault(Function(p) p.Code = code)
                 If prop IsNot Nothing Then
                     Dim isVisible = visibleProps IsNot Nothing AndAlso visibleProps.Contains(code)
@@ -414,7 +414,7 @@ Public Class DisplayPreferencesForm
             Next
 
             ' Ajouter les propriétés qui ne sont pas dans l'ordre (nouvelles propriétés)
-            For Each prop In properties
+            For Each prop As PropertyInfo In properties
                 If Not propertyOrder.Contains(prop.Code) Then
                     Dim isVisible = visibleProps IsNot Nothing AndAlso visibleProps.Contains(prop.Code)
                     _propertiesCheckedListBox.Items.Add(prop, isVisible)
@@ -422,7 +422,7 @@ Public Class DisplayPreferencesForm
             Next
         Else
             ' Pas d'ordre défini, ajouter toutes les propriétés
-            For Each prop In properties
+            For Each prop As PropertyInfo In properties
                 Dim isVisible = If(visibleProps Is Nothing OrElse visibleProps.Count = 0, False, visibleProps.Contains(prop.Code))
                 _propertiesCheckedListBox.Items.Add(prop, isVisible)
             Next
@@ -525,10 +525,10 @@ Public Class DisplayPreferencesForm
     ''' </summary>
     Private Sub ResetButton_Click(sender As Object, e As EventArgs)
         Try
-            Dim selectedItem = TryCast(_categoryComboBox.SelectedItem, CategoryDisplayItem)
+            Dim selectedItem As CategoryDisplayItem = TryCast(_categoryComboBox.SelectedItem, CategoryDisplayItem)
             If selectedItem Is Nothing Then Return
 
-            Dim result = MessageBox.Show(
+            Dim result As DialogResult = MessageBox.Show(
                 "Êtes-vous sûr de vouloir réinitialiser les préférences pour cette catégorie ?" & Environment.NewLine &
                 "Toutes les propriétés seront affichées par défaut.",
                 "Confirmation",
@@ -557,13 +557,13 @@ Public Class DisplayPreferencesForm
 
         Try
             ' Récupérer la catégorie actuellement sélectionnée
-            Dim selectedItem = TryCast(_categoryComboBox.SelectedItem, CategoryDisplayItem)
+            Dim selectedItem As CategoryDisplayItem = TryCast(_categoryComboBox.SelectedItem, CategoryDisplayItem)
             If selectedItem Is Nothing Then
                 MessageBox.Show("Aucune catégorie sélectionnée.", "Attention", MessageBoxButtons.OK, MessageBoxIcon.Warning)
                 Return
             End If
 
-            Dim category = selectedItem.Category
+            Dim category As String = selectedItem.Category
 
             ' Récupérer les propriétés visibles
             Dim visibleProps As New List(Of String)

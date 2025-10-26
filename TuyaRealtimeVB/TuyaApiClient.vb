@@ -633,9 +633,10 @@ Public Class TuyaApiClient
     ''' <summary>
     ''' Récupère toutes les automatisations
     ''' </summary>
-    Public Async Function GetAutomationsAsync() As Task(Of List(Of JObject))
+    Public Async Function GetAutomationsAsync(Optional homeId As String = Nothing) As Task(Of List(Of JObject))
         Try
             Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            ' Note: homeId est ignoré pour l'instant car l'API récupère toutes les automations de l'utilisateur
             Dim url = BuildUrl(API_VERSION_USERS, _cfg.Uid, "/automations")
             Dim json = Await MakeApiCallAsync(url, token)
 
@@ -653,14 +654,10 @@ Public Class TuyaApiClient
     ''' <summary>
     ''' Crée une nouvelle automatisation
     ''' </summary>
-    Public Async Function CreateAutomationAsync(name As String, actions As JArray, conditions As JArray) As Task(Of String)
+    Public Async Function CreateAutomationAsync(homeId As String, automationData As JObject) As Task(Of String)
         Try
-            Dim body = New Dictionary(Of String, Object) From {
-                {"name", name},
-                {"actions", actions},
-                {"conditions", conditions}
-            }
-            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            ' homeId est ignoré car l'API utilise l'UID de l'utilisateur
+            Dim jsonBody = automationData.ToString()
             Dim url = BuildUrl(API_VERSION_USERS, _cfg.Uid, "/automations")
             Dim token = Await _tokenProvider.GetAccessTokenAsync()
 
@@ -682,14 +679,10 @@ Public Class TuyaApiClient
     ''' <summary>
     ''' Met à jour une automatisation existante
     ''' </summary>
-    Public Async Function UpdateAutomationAsync(automationId As String, name As String, actions As JArray, conditions As JArray) As Task(Of Boolean)
+    Public Async Function UpdateAutomationAsync(homeId As String, automationId As String, automationData As JObject) As Task(Of Boolean)
         Try
-            Dim body = New Dictionary(Of String, Object) From {
-                {"name", name},
-                {"actions", actions},
-                {"conditions", conditions}
-            }
-            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            ' homeId est ignoré car l'API utilise l'ID de l'automation
+            Dim jsonBody = automationData.ToString()
             Dim url = BuildUrl("/v1.0/automations/", automationId)
             Dim token = Await _tokenProvider.GetAccessTokenAsync()
 
@@ -704,8 +697,9 @@ Public Class TuyaApiClient
     ''' <summary>
     ''' Supprime une automatisation
     ''' </summary>
-    Public Async Function DeleteAutomationAsync(automationId As String) As Task(Of Boolean)
+    Public Async Function DeleteAutomationAsync(homeId As String, automationId As String) As Task(Of Boolean)
         Try
+            ' homeId est ignoré car l'API utilise l'ID de l'automation
             Dim url = BuildUrl("/v1.0/automations/", automationId)
             Dim token = Await _tokenProvider.GetAccessTokenAsync()
             Dim response = Await ExecuteDeleteRequestAsync(url, token)
@@ -719,8 +713,9 @@ Public Class TuyaApiClient
     ''' <summary>
     ''' Active une automatisation
     ''' </summary>
-    Public Async Function EnableAutomationAsync(automationId As String) As Task(Of Boolean)
+    Public Async Function EnableAutomationAsync(homeId As String, automationId As String) As Task(Of Boolean)
         Try
+            ' homeId est ignoré car l'API utilise l'ID de l'automation
             Dim body = New Dictionary(Of String, Object) From {{"enabled", True}}
             Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
             Dim url = BuildUrl("/v1.0/automations/", automationId, "/actions/enable")
@@ -737,8 +732,9 @@ Public Class TuyaApiClient
     ''' <summary>
     ''' Désactive une automatisation
     ''' </summary>
-    Public Async Function DisableAutomationAsync(automationId As String) As Task(Of Boolean)
+    Public Async Function DisableAutomationAsync(homeId As String, automationId As String) As Task(Of Boolean)
         Try
+            ' homeId est ignoré car l'API utilise l'ID de l'automation
             Dim body = New Dictionary(Of String, Object) From {{"enabled", False}}
             Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
             Dim url = BuildUrl("/v1.0/automations/", automationId, "/actions/disable")
@@ -942,6 +938,68 @@ Public Class TuyaApiClient
             Dim hashBytes = sha256.ComputeHash(bytes)
             Return BitConverter.ToString(hashBytes).Replace("-", "").ToLower()
         End Using
+    End Function
+
+    ''' <summary>
+    ''' Parse un JToken en DeviceInfo (version simple sans appels async)
+    ''' </summary>
+    Private Function ParseDeviceInfo(device As JToken) As DeviceInfo
+        Return New DeviceInfo With {
+            .Id = GetJsonString(device, "id"),
+            .Name = GetJsonString(device, "name"),
+            .ProductName = GetJsonString(device, "product_name"),
+            .Category = GetJsonString(device, "category"),
+            .Icon = GetJsonString(device, "icon"),
+            .IsOnline = GetJsonBool(device, "online"),
+            .RoomId = Nothing,
+            .RoomName = Nothing,
+            .HomeId = Nothing,
+            .HomeName = Nothing
+        }
+    End Function
+
+    ''' <summary>
+    ''' Récupère le statut de plusieurs appareils en une seule requête (batch)
+    ''' </summary>
+    Public Async Function GetDeviceStatusBatchAsync(deviceIds As List(Of String)) As Task(Of Dictionary(Of String, JObject))
+        Dim results As New Dictionary(Of String, JObject)()
+
+        Try
+            ' L'API Tuya ne supporte pas vraiment le batch, on fait donc des appels individuels
+            ' TODO: Optimiser si l'API supporte le batch à l'avenir
+            For Each deviceId In deviceIds
+                Try
+                    Dim status = Await GetDeviceStatusAsync(deviceId)
+                    If status IsNot Nothing Then
+                        results(deviceId) = status
+                    End If
+                Catch ex As Exception
+                    Log($"Erreur récupération statut pour {deviceId}: {ex.Message}")
+                End Try
+            Next
+        Catch ex As Exception
+            LogError("GetDeviceStatusBatchAsync", ex)
+        End Try
+
+        Return results
+    End Function
+
+    ''' <summary>
+    ''' Retourne la liste des catégories connues depuis les devices chargés
+    ''' </summary>
+    Public Function GetCachedCategories() As List(Of String)
+        ' Pour l'instant, retourne une liste vide
+        ' TODO: Implémenter un vrai cache de catégories basé sur les devices chargés
+        Return New List(Of String)()
+    End Function
+
+    ''' <summary>
+    ''' Retourne les spécifications d'une catégorie depuis le cache
+    ''' </summary>
+    Public Function GetCachedSpecificationByCategory(category As String) As JObject
+        ' Pour l'instant, retourne Nothing
+        ' TODO: Implémenter un vrai cache de spécifications
+        Return Nothing
     End Function
 #End Region
 

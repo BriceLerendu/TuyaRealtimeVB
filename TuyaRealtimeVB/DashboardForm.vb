@@ -1172,7 +1172,8 @@ Public Class DashboardForm
 
     Private Sub CreateDeviceCard(devId As String, deviceInfo As DeviceInfo)
         Try
-            Dim card = New DeviceCard(devId, _apiClient)
+            Dim card = New DeviceCard(devId)
+            card.SetApiClient(_apiClient)
             card.UpdateDeviceInfo(deviceInfo)
             _deviceCards(devId) = card
             _devicesPanel.Controls.Add(card)
@@ -1189,7 +1190,8 @@ Public Class DashboardForm
                 Return
             End If
 
-            Dim card = New DeviceCard(devId, _apiClient)
+            Dim card = New DeviceCard(devId)
+            card.SetApiClient(_apiClient)
             card.UpdateDeviceInfo(deviceInfo)
             _deviceCards(devId) = card
 
