@@ -462,7 +462,8 @@ Public Class TuyaHistoryService
 
             ' type=7 : Data point reported (OBLIGATOIRE selon doc Tuya)
             ' size=100 : L'API limite à 100 de toute façon
-            Dim queryParams = $"?start_time={startTimestamp}&end_time={endTimestamp}&size=100&type=7"
+            ' query_type=1 : Free edition (selon doc Tuya)
+            Dim queryParams = $"?type=7&start_time={startTimestamp}&end_time={endTimestamp}&size=100&query_type=1"
 
             Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
 
