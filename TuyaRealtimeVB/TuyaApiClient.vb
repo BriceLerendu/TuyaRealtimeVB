@@ -747,6 +747,8 @@ Public Class TuyaApiClient
         Log($"🔐 Signature Debug - Path: {path}")
         Log($"🔐 Signature Debug - Method: {httpMethod}, BodyHash: {bodyHash}")
         Log($"🔐 Signature Debug - Timestamp: {t}, Nonce: {nonce}")
+        Log($"🔐 Signature Debug - Token: {If(String.IsNullOrEmpty(token), "VIDE !!!", token.Substring(0, Math.Min(20, token.Length)) & "...")}")
+        Log($"🔐 Signature Debug - ClientId: {_cfg.AccessId}")
 
         Dim sign = CalculateSignature(httpMethod, bodyHash, path, token, t, nonce)
         Log($"🔐 Signature Debug - Sign: {sign}")
