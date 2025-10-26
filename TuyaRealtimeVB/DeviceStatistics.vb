@@ -28,6 +28,21 @@ Public Class DeviceStatistics
     ''' Code du DP (data point) Tuya
     ''' </summary>
     Public Property Code As String
+
+    ''' <summary>
+    ''' Type de visualisation adapté aux données
+    ''' </summary>
+    Public Property VisualizationType As SensorVisualizationType = SensorVisualizationType.NumericContinuous
+
+    ''' <summary>
+    ''' Nombre total d'événements (pour DiscreteEvents)
+    ''' </summary>
+    Public Property TotalEvents As Integer
+
+    ''' <summary>
+    ''' Heure de pic d'activité (pour DiscreteEvents)
+    ''' </summary>
+    Public Property PeakActivityHour As String
 End Class
 
 ''' <summary>
@@ -92,4 +107,18 @@ Public Enum HistoryPeriod
 
     ''' <summary>Derniers 30 jours</summary>
     Last30Days = 2
+End Enum
+
+''' <summary>
+''' Type de visualisation adaptée aux données du capteur
+''' </summary>
+Public Enum SensorVisualizationType
+    ''' <summary>Valeurs numériques continues (température, puissance, etc.)</summary>
+    NumericContinuous = 0
+
+    ''' <summary>États binaires (switch on/off, porte ouverte/fermée, etc.)</summary>
+    BinaryState = 1
+
+    ''' <summary>Événements ponctuels (détections PIR, alarmes, etc.)</summary>
+    DiscreteEvents = 2
 End Enum

@@ -88,22 +88,24 @@ Public Class HistoryForm
             .Padding = New Padding(15)
         }
 
-        ' Label Propriété
+        ' Label Propriété (CACHÉ - le service choisit automatiquement)
         Dim propertyLabel As New System.Windows.Forms.Label With {
             .Text = "Propriété :",
             .Location = New Point(15, 18),
             .AutoSize = True,
             .Font = New Font("Segoe UI", 10, WinFontStyle.Bold),
-            .ForeColor = WinColor.FromArgb(28, 28, 30)
+            .ForeColor = WinColor.FromArgb(28, 28, 30),
+            .Visible = False
         }
         headerPanel.Controls.Add(propertyLabel)
 
-        ' ComboBox Propriété
+        ' ComboBox Propriété (CACHÉ - le service choisit automatiquement)
         _propertyComboBox = New ComboBox With {
             .Location = New Point(100, 15),
             .Size = New Size(250, 25),
             .Font = New Font("Segoe UI", 10),
-            .DropDownStyle = ComboBoxStyle.DropDownList
+            .DropDownStyle = ComboBoxStyle.DropDownList,
+            .Visible = False
         }
 
         ' Remplir avec les propriétés disponibles
@@ -125,19 +127,19 @@ Public Class HistoryForm
         AddHandler _propertyComboBox.SelectedIndexChanged, AddressOf PropertyComboBox_SelectedIndexChanged
         headerPanel.Controls.Add(_propertyComboBox)
 
-        ' Label Période
+        ' Label Période (déplacé à gauche car le sélecteur de propriété est caché)
         Dim periodLabel As New System.Windows.Forms.Label With {
             .Text = "Période :",
-            .Location = New Point(370, 18),
+            .Location = New Point(15, 18),
             .AutoSize = True,
             .Font = New Font("Segoe UI", 10, WinFontStyle.Bold),
             .ForeColor = WinColor.FromArgb(28, 28, 30)
         }
         headerPanel.Controls.Add(periodLabel)
 
-        ' ComboBox Période
+        ' ComboBox Période (déplacé à gauche car le sélecteur de propriété est caché)
         _periodComboBox = New ComboBox With {
-            .Location = New Point(445, 15),
+            .Location = New Point(90, 15),
             .Size = New Size(200, 25),
             .Font = New Font("Segoe UI", 10),
             .DropDownStyle = ComboBoxStyle.DropDownList
@@ -151,10 +153,10 @@ Public Class HistoryForm
         AddHandler _periodComboBox.SelectedIndexChanged, AddressOf PeriodComboBox_SelectedIndexChanged
         headerPanel.Controls.Add(_periodComboBox)
 
-        ' Bouton Actualiser
+        ' Bouton Actualiser (repositionné)
         _refreshButton = New Button With {
             .Text = "🔄 Actualiser",
-            .Location = New Point(665, 14),
+            .Location = New Point(310, 14),
             .Size = New Size(120, 30),
             .Font = New Font("Segoe UI", 9, WinFontStyle.Bold),
             .BackColor = WinColor.FromArgb(0, 122, 255),
@@ -166,10 +168,10 @@ Public Class HistoryForm
         AddHandler _refreshButton.Click, AddressOf RefreshButton_Click
         headerPanel.Controls.Add(_refreshButton)
 
-        ' Label Chargement
+        ' Label Chargement (repositionné)
         _loadingLabel = New System.Windows.Forms.Label With {
             .Text = "Chargement...",
-            .Location = New Point(805, 18),
+            .Location = New Point(450, 18),
             .AutoSize = True,
             .Font = New Font("Segoe UI", 9, WinFontStyle.Italic),
             .ForeColor = WinColor.FromArgb(128, 128, 128),
@@ -266,7 +268,7 @@ Public Class HistoryForm
             _refreshButton.Enabled = False
 
             ' Charger statistiques et logs en parallèle
-            Dim statsTask = _historyService.GetDeviceStatisticsAsync(_deviceId, _currentPeriod, _currentPropertyCode, _deviceCategory)
+            Dim statsTask = _historyService.GetDeviceStatisticsAsync(_deviceId, _currentPeriod)
             Dim logsTask = _historyService.GetDeviceLogsAsync(_deviceId, _currentPeriod)
 
             Await Task.WhenAll(statsTask, logsTask)
@@ -274,12 +276,14 @@ Public Class HistoryForm
             Dim stats = Await statsTask
             Dim logs = Await logsTask
 
-            ' Déterminer le type de graphique
-            Dim chartType = TuyaCategoryManager.Instance.GetPropertyChartType(_deviceCategory, _currentPropertyCode)
+            ' Le type de graphique est maintenant déterminé automatiquement par le service
+            ' basé sur le type de données (stats.VisualizationType)
 
             ' Afficher graphique
             If stats IsNot Nothing AndAlso stats.DataPoints.Count > 0 Then
-                DrawStatisticsChart(stats, chartType)
+                ' Mettre à jour le code de propriété actuel avec ce qui a été trouvé
+                _currentPropertyCode = stats.Code
+                DrawStatisticsChart(stats)
             Else
                 DrawNoDataMessage("Aucune donnée disponible" & vbCrLf &
                                  "Vérifiez que l'appareil enregistre des statistiques" & vbCrLf &
@@ -311,11 +315,11 @@ Public Class HistoryForm
     End Sub
 
     ''' <summary>
-    ''' Dessine le graphique selon le type (numeric ou state)
+    ''' Dessine le graphique selon le type de visualisation détecté
     ''' </summary>
-    Private Sub DrawStatisticsChart(stats As DeviceStatistics, chartType As String)
-        Select Case chartType
-            Case "state"
+    Private Sub DrawStatisticsChart(stats As DeviceStatistics)
+        Select Case stats.VisualizationType
+            Case SensorVisualizationType.BinaryState, SensorVisualizationType.DiscreteEvents
                 DrawStateChart(stats)
             Case Else
                 DrawNumericChart(stats)
