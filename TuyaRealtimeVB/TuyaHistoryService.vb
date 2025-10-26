@@ -15,17 +15,12 @@ Public Class TuyaHistoryService
     Private ReadOnly _logsCache As New Dictionary(Of String, CachedLogs)
     Private Const CACHE_TTL_MINUTES As Integer = 5
 
-    ' Codes DP à essayer par ordre de priorité
+    ' Codes DP à essayer par ordre de priorité (réduit à 3 codes les plus courants)
     ' Énergie/Puissance
     Private ReadOnly _electricityCodesPriority As String() = {
-        "forward_energy_total",  ' Énergie totale (compteur)
+        "cur_power",             ' Puissance actuelle (le plus courant)
         "add_ele",               ' Énergie cumulée
-        "phase_a",               ' Puissance phase A
-        "cur_power",             ' Puissance actuelle
-        "cur_voltage",           ' Voltage
-        "cur_current",           ' Courant
-        "va_temperature",        ' Température
-        "humidity_value"         ' Humidité
+        "switch_1"               ' État switch (pour événements on/off)
     }
 
     Public Sub New(apiClient As TuyaApiClient, Optional logCallback As Action(Of String) = Nothing)
@@ -390,7 +385,7 @@ Public Class TuyaHistoryService
     End Function
 
     ''' <summary>
-    ''' CONTOURNEMENT BUG PAGINATION TUYA : Divise la période en tranches de 2h
+    ''' CONTOURNEMENT BUG PAGINATION TUYA : Divise la période en tranches adaptatives
     ''' </summary>
     Private Async Function GetLogsWithTimeSlicesAsync(
         deviceId As String,
@@ -401,27 +396,33 @@ Public Class TuyaHistoryService
         Try
             Dim allLogs As New List(Of DeviceLog)
 
-            ' Diviser en tranches de 2 heures pour capturer plus de données sur toute la période
-            Dim twoHoursInMs As Long = 2 * 60 * 60 * 1000
+            ' Calculer la durée totale en heures
+            Dim totalMs As Long = endTimestamp - startTimestamp
+            Dim totalHours As Integer = CInt(totalMs / (60 * 60 * 1000))
+
+            ' Adapter la taille des tranches selon la période
+            ' 24h : tranches de 2h (12 tranches)
+            ' 7 jours : tranches de 12h (14 tranches)
+            Dim sliceSizeMs As Long
+            If totalHours <= 24 Then
+                sliceSizeMs = 2 * 60 * 60 * 1000  ' 2 heures
+            Else
+                sliceSizeMs = 12 * 60 * 60 * 1000  ' 12 heures
+            End If
+
             Dim currentStart As Long = startTimestamp
             Dim sliceCount As Integer = 0
+            Dim maxSlices As Integer = 20  ' Limite à 20 tranches maximum
 
-            Log($"🔧 Contournement bug pagination : division en tranches de 2h pour 24h complètes")
-
-            While currentStart < endTimestamp
+            While currentStart < endTimestamp AndAlso sliceCount < maxSlices
                 sliceCount += 1
-                Dim currentEnd As Long = Math.Min(currentStart + twoHoursInMs, endTimestamp)
-
-                Dim sliceStart = DateTimeOffset.FromUnixTimeMilliseconds(currentStart).LocalDateTime
-                Dim sliceEnd = DateTimeOffset.FromUnixTimeMilliseconds(currentEnd).LocalDateTime
-                Log($"  📅 Tranche {sliceCount}: {sliceStart:dd/MM HH:mm} → {sliceEnd:dd/MM HH:mm}")
+                Dim currentEnd As Long = Math.Min(currentStart + sliceSizeMs, endTimestamp)
 
                 ' Appeler l'API pour cette tranche spécifique (sans pagination)
                 Dim sliceLogs = Await GetDeviceLogsV1Async(deviceId, currentStart, currentEnd)
 
                 If sliceLogs IsNot Nothing AndAlso sliceLogs.Count > 0 Then
                     allLogs.AddRange(sliceLogs)
-                    Log($"    ✅ {sliceLogs.Count} logs dans cette tranche")
                 End If
 
                 currentStart = currentEnd
