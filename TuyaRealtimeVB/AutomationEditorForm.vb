@@ -812,7 +812,7 @@ Public Class ConditionControl
 
     Public Event RemoveRequested(sender As ConditionControl)
 
-    Public Sub New(devices As JArray, existingCondition As JToken)
+    Public Sub New(devices As List(Of DeviceInfo), existingCondition As JToken)
         _devices = devices
         InitializeControl(existingCondition)
     End Sub
@@ -858,10 +858,8 @@ Public Class ConditionControl
             .BackColor = Color.FromArgb(70, 70, 73),
             .ForeColor = Color.White
         }
-        For Each device As JToken In _devices
-            Dim deviceName = GetJsonString(device, "name")
-            Dim deviceId = GetJsonString(device, "id")
-            _cboDevice.Items.Add(New DeviceItem(deviceId, deviceName))
+        For Each device As DeviceInfo In _devices
+            _cboDevice.Items.Add(New DeviceItem(device.Id, device.Name))
         Next
 
         ' Propriété
@@ -988,12 +986,11 @@ Public Class ConditionControl
         ' Récupérer les spécifications depuis le cache (déjà dans l'objet device)
         Dim deviceSpecs As JObject = Nothing
 
-        For Each device As JToken In _devices
-            If GetJsonString(device, "id") = deviceItem.Id Then
-                ' Les specs sont déjà attachées par GetDevicesByHomeAsync
-                Dim cachedSpecs = device("_cached_specifications")
-                If cachedSpecs IsNot Nothing AndAlso TypeOf cachedSpecs Is JObject Then
-                    deviceSpecs = CType(cachedSpecs, JObject)
+        For Each device As DeviceInfo In _devices
+            If device.Id = deviceItem.Id Then
+                ' Les specs sont dans la propriété Specifications
+                If device.Specifications IsNot Nothing Then
+                    deviceSpecs = device.Specifications
                 End If
                 Exit For
             End If
@@ -1332,7 +1329,7 @@ Public Class ActionControl
 
     Public Event RemoveRequested(sender As ActionControl)
 
-    Public Sub New(devices As JArray, existingAction As JToken)
+    Public Sub New(devices As List(Of DeviceInfo), existingAction As JToken)
         _devices = devices
         InitializeControl(existingAction)
     End Sub
@@ -1378,10 +1375,8 @@ Public Class ActionControl
             .BackColor = Color.FromArgb(70, 70, 73),
             .ForeColor = Color.White
         }
-        For Each device As JToken In _devices
-            Dim deviceName = GetJsonString(device, "name")
-            Dim deviceId = GetJsonString(device, "id")
-            _cboDevice.Items.Add(New DeviceItem(deviceId, deviceName))
+        For Each device As DeviceInfo In _devices
+            _cboDevice.Items.Add(New DeviceItem(device.Id, device.Name))
         Next
 
         ' Commande
@@ -1501,12 +1496,12 @@ Public Class ActionControl
         ' Récupérer les spécifications depuis le cache (déjà dans l'objet device)
         Dim deviceSpecs As JObject = Nothing
 
-        For Each device As JToken In _devices
-            If GetJsonString(device, "id") = deviceItem.Id Then
+        For Each device As DeviceInfo In _devices
+            If device.Id = deviceItem.Id Then
                 Console.WriteLine($"[ActionControl] Device trouvé dans _devices")
 
-                ' Les specs sont déjà attachées par GetDevicesByHomeAsync
-                Dim cachedSpecs = device("_cached_specifications")
+                ' Les specs sont dans la propriété Specifications
+                Dim cachedSpecs = device.Specifications
                 If cachedSpecs IsNot Nothing Then
                     Console.WriteLine($"[ActionControl] _cached_specifications existe")
                     If TypeOf cachedSpecs Is JObject Then

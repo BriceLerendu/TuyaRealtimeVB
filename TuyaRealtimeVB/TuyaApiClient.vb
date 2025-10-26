@@ -570,7 +570,12 @@ Public Class TuyaApiClient
             Dim result = json("result")
             If result IsNot Nothing AndAlso TypeOf result Is JArray Then
                 For Each device In CType(result, JArray)
-                    devices.Add(ParseDeviceInfo(device))
+                    Dim deviceInfo = ParseDeviceInfo(device)
+                    ' Charger les spécifications pour ce device
+                    If Not String.IsNullOrEmpty(deviceInfo.Category) Then
+                        deviceInfo.Specifications = GetCachedSpecificationByCategory(deviceInfo.Category)
+                    End If
+                    devices.Add(deviceInfo)
                 Next
             End If
             Return devices
@@ -1016,4 +1021,5 @@ Public Class DeviceInfo
     Public Property RoomName As String
     Public Property HomeId As String
     Public Property HomeName As String
+    Public Property Specifications As JObject
 End Class
