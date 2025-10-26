@@ -62,7 +62,8 @@ Public Class TuyaHistoryService
     End Function
 
     ''' <summary>
-    ''' Récupère les statistiques horaires pour les dernières 24h (avec découpage par périodes de 2h)
+    ''' Récupère les statistiques pour les dernières 24h
+    ''' Note: L'API /statistics/days retourne automatiquement des données avec granularité horaire pour des périodes courtes
     ''' </summary>
     Private Async Function GetHourlyStatisticsAsync(
         deviceId As String,
@@ -80,75 +81,68 @@ Public Class TuyaHistoryService
         }
 
         Try
-            Dim endTime = DateTime.Now
-            Dim startTime = endTime.AddHours(-24)
+            ' Pour les 24 dernières heures, on demande aujourd'hui et hier
+            Dim endDate = DateTime.Now.Date
+            Dim startDate = endDate.AddDays(-1)
 
-            ' L'API limite à 100 valeurs par appel
-            ' On découpe en périodes de 2h (24h / 12 périodes = ~2h chacune)
-            Dim chunkHours = 2
-            Dim chunksCount = CInt(Math.Ceiling(24.0 / chunkHours))
+            ' Convertir en format yyyyMMdd
+            Dim startDay = startDate.ToString("yyyyMMdd")
+            Dim endDay = endDate.ToString("yyyyMMdd")
 
-            Log($"Récupération statistiques horaires sur 24h: {deviceId}, code: {code}")
-            Log($"  → Découpage en {chunksCount} périodes de {chunkHours}h")
+            ' Endpoint API Tuya pour statistiques (granularité automatique selon la période)
+            Dim endpoint = $"/v1.0/devices/{deviceId}/statistics/days"
+            Dim queryParams = $"?code={code}&start_day={startDay}&end_day={endDay}&stat_type=sum"
 
-            For chunkIndex = 0 To chunksCount - 1
-                Dim chunkEndTime = endTime.AddHours(-chunkIndex * chunkHours)
-                Dim chunkStartTime = chunkEndTime.AddHours(-chunkHours)
+            Log($"Récupération statistiques 24h: {deviceId}, code: {code} ({startDay} → {endDay})")
 
-                ' Ne pas dépasser les 24h
-                If chunkStartTime < startTime Then
-                    chunkStartTime = startTime
-                End If
+            ' Appel API
+            Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
 
-                ' Convertir en timestamps Unix (millisecondes)
-                Dim startTimestamp = CLng((chunkStartTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
-                Dim endTimestamp = CLng((chunkEndTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
+            If response IsNot Nothing AndAlso response("success")?.ToObject(Of Boolean)() = True Then
+                Dim result = response("result")
 
-                ' Endpoint API Tuya pour statistiques horaires
-                Dim endpoint = $"/v1.0/devices/{deviceId}/statistics/hours"
-                Dim queryParams = $"?code={code}&start_time={startTimestamp}&end_time={endTimestamp}&type=sum"
+                ' Parser les points de données
+                ' Format: { "result": { "days": { "20250101": "value1", "20250102": "value2" } } }
+                If result IsNot Nothing Then
+                    Dim daysData = TryCast(result("days"), JObject)
+                    If daysData IsNot Nothing Then
+                        For Each prop As JProperty In daysData.Properties()
+                            Dim dateKey = prop.Name  ' Format: "yyyyMMdd" ou potentiellement "yyyyMMddHH" pour horaire
+                            Dim valueStr = prop.Value?.ToString()
 
-                Log($"  → Période {chunkIndex + 1}/{chunksCount}: {chunkStartTime:HH:mm} - {chunkEndTime:HH:mm}")
+                            If Not String.IsNullOrEmpty(dateKey) AndAlso Not String.IsNullOrEmpty(valueStr) Then
+                                ' Essayer de parser comme date complète (yyyyMMdd)
+                                Dim dt As DateTime
+                                If DateTime.TryParseExact(dateKey, "yyyyMMdd", Nothing,
+                                                         Globalization.DateTimeStyles.None, dt) Then
+                                    Dim numValue As Double
+                                    If Double.TryParse(valueStr, Globalization.NumberStyles.Any,
+                                                      Globalization.CultureInfo.InvariantCulture, numValue) Then
+                                        ' Appliquer la conversion depuis la config
+                                        numValue = ApplyPropertyConversion(category, code, numValue)
 
-                ' Appel API
-                Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
-
-                If response IsNot Nothing AndAlso response("success")?.ToObject(Of Boolean)() = True Then
-                    Dim result = response("result")
-
-                    ' Parser les points de données
-                    If result IsNot Nothing AndAlso TypeOf result Is JArray Then
-                        For Each item As JToken In CType(result, JArray)
-                            Dim jItem = CType(item, JObject)
-                            Dim timestamp = jItem("time")?.ToObject(Of Long)()
-                            Dim value = jItem("value")?.ToString()
-
-                            If timestamp.HasValue AndAlso Not String.IsNullOrEmpty(value) Then
-                                Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
-
-                                ' Convertir la valeur en tenant compte du diviseur
-                                Dim numValue As Double = 0
-                                If Double.TryParse(value, numValue) Then
-                                    ' Appliquer la conversion depuis la config
-                                    numValue = ApplyPropertyConversion(category, code, numValue)
+                                        stats.DataPoints.Add(New StatisticPoint With {
+                                            .Timestamp = dt,
+                                            .Value = numValue,
+                                            .Label = dt.ToString("dd/MM HH:mm")
+                                        })
+                                    End If
                                 End If
-
-                                stats.DataPoints.Add(New StatisticPoint With {
-                                    .Timestamp = dt,
-                                    .Value = numValue,
-                                    .Label = dt.ToString("HH:mm")  ' Format horaire
-                                })
                             End If
                         Next
                     End If
-                Else
-                    Dim errorMsg = If(response?("msg")?.ToString(), "Erreur inconnue")
-                    Log($"    ⚠️ Erreur API pour cette période: {errorMsg}")
                 End If
-            Next
 
-            ' Trier par timestamp
-            stats.DataPoints = stats.DataPoints.OrderBy(Function(p) p.Timestamp).ToList()
+                ' Trier par timestamp
+                stats.DataPoints = stats.DataPoints.OrderBy(Function(p) p.Timestamp).ToList()
+
+                If stats.DataPoints.Count = 0 Then
+                    Log($"⚠️ 0 points de données pour le code '{code}' sur 24h")
+                End If
+            Else
+                Dim errorMsg = If(response?("msg")?.ToString(), "Erreur inconnue")
+                Log($"❌ Erreur API statistiques 24h: {errorMsg}")
+            End If
 
         Catch ex As Exception
             Log($"❌ Exception GetHourlyStatisticsAsync: {ex.Message}")
@@ -177,28 +171,28 @@ Public Class TuyaHistoryService
         }
 
         Try
-            Dim endTime = DateTime.Now
-            Dim startTime As DateTime
+            Dim endDate = DateTime.Now.Date
+            Dim startDate As DateTime
 
             ' Définir la période
             Select Case period
                 Case HistoryPeriod.Last7Days
-                    startTime = endTime.AddDays(-7)
+                    startDate = endDate.AddDays(-7)
                 Case HistoryPeriod.Last30Days
-                    startTime = endTime.AddDays(-30)
+                    startDate = endDate.AddDays(-30)
                 Case Else
-                    startTime = endTime.AddDays(-7)
+                    startDate = endDate.AddDays(-7)
             End Select
 
-            ' Convertir en timestamps Unix (millisecondes)
-            Dim startTimestamp = CLng((startTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
-            Dim endTimestamp = CLng((endTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
+            ' Convertir en format yyyyMMdd (format requis par l'API Tuya)
+            Dim startDay = startDate.ToString("yyyyMMdd")
+            Dim endDay = endDate.ToString("yyyyMMdd")
 
             ' Endpoint API Tuya pour statistiques journalières
             Dim endpoint = $"/v1.0/devices/{deviceId}/statistics/days"
-            Dim queryParams = $"?code={code}&start_time={startTimestamp}&end_time={endTimestamp}&type=sum"
+            Dim queryParams = $"?code={code}&start_day={startDay}&end_day={endDay}&stat_type=sum"
 
-            Log($"Récupération statistiques journalières: {deviceId}, code: {code}, période: {period}")
+            Log($"Récupération statistiques journalières: {deviceId}, code: {code}, période: {period} ({startDay} → {endDay})")
 
             ' Appel API
             Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
@@ -207,29 +201,42 @@ Public Class TuyaHistoryService
                 Dim result = response("result")
 
                 ' Parser les points de données
-                If result IsNot Nothing AndAlso TypeOf result Is JArray Then
-                    For Each item As JToken In CType(result, JArray)
-                        Dim jItem = CType(item, JObject)
-                        Dim timestamp = jItem("time")?.ToObject(Of Long)()
-                        Dim value = jItem("value")?.ToString()
+                ' Format: { "result": { "days": { "20250101": "value1", "20250102": "value2" } } }
+                If result IsNot Nothing Then
+                    Dim daysData = TryCast(result("days"), JObject)
+                    If daysData IsNot Nothing Then
+                        For Each prop As JProperty In daysData.Properties()
+                            Dim dateKey = prop.Name  ' Format: "yyyyMMdd"
+                            Dim valueStr = prop.Value?.ToString()
 
-                        If timestamp.HasValue AndAlso Not String.IsNullOrEmpty(value) Then
-                            Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
+                            If Not String.IsNullOrEmpty(dateKey) AndAlso Not String.IsNullOrEmpty(valueStr) Then
+                                ' Parser la date (format yyyyMMdd)
+                                Dim dt As DateTime
+                                If DateTime.TryParseExact(dateKey, "yyyyMMdd", Nothing,
+                                                         Globalization.DateTimeStyles.None, dt) Then
+                                    Dim numValue As Double
+                                    If Double.TryParse(valueStr, Globalization.NumberStyles.Any,
+                                                      Globalization.CultureInfo.InvariantCulture, numValue) Then
+                                        ' Appliquer la conversion depuis la config
+                                        numValue = ApplyPropertyConversion(category, code, numValue)
 
-                            ' Convertir la valeur en tenant compte du diviseur
-                            Dim numValue As Double = 0
-                            If Double.TryParse(value, numValue) Then
-                                ' Appliquer la conversion depuis la config
-                                numValue = ApplyPropertyConversion(category, code, numValue)
+                                        stats.DataPoints.Add(New StatisticPoint With {
+                                            .Timestamp = dt,
+                                            .Value = numValue,
+                                            .Label = dt.ToString("dd/MM")  ' Format journalier
+                                        })
+                                    End If
+                                End If
                             End If
+                        Next
+                    End If
+                End If
 
-                            stats.DataPoints.Add(New StatisticPoint With {
-                                .Timestamp = dt,
-                                .Value = numValue,
-                                .Label = dt.ToString("dd/MM")  ' Format journalier
-                            })
-                        End If
-                    Next
+                ' Trier par date
+                stats.DataPoints = stats.DataPoints.OrderBy(Function(p) p.Timestamp).ToList()
+
+                If stats.DataPoints.Count = 0 Then
+                    Log($"⚠️ 0 points de données pour le code '{code}'. L'appareil ne mesure peut-être pas cette donnée.")
                 End If
             Else
                 Dim errorMsg = If(response?("msg")?.ToString(), "Erreur inconnue")
