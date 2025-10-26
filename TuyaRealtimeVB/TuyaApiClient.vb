@@ -741,8 +741,7 @@ Public Class TuyaApiClient
                                        httpMethod As String, bodyHash As String)
         Dim t = GetTimestamp()
         Dim nonce = Guid.NewGuid().ToString("N")
-        ' ✅ CORRECTION: Utiliser Path seulement (sans query params) pour la signature
-        Dim path = New Uri(url).AbsolutePath
+        Dim path = New Uri(url).PathAndQuery
 
         Dim sign = CalculateSignature(httpMethod, bodyHash, path, token, t, nonce)
 
@@ -758,8 +757,7 @@ Public Class TuyaApiClient
                                        httpMethod As String, bodyHash As String)
         Dim t = GetTimestamp()
         Dim nonce = Guid.NewGuid().ToString("N")
-        ' ✅ CORRECTION: Utiliser Path seulement (sans query params) pour la signature
-        Dim path = New Uri(url).AbsolutePath
+        Dim path = New Uri(url).PathAndQuery
 
         Dim sign = CalculateSignature(httpMethod, bodyHash, path, token, t, nonce)
 
