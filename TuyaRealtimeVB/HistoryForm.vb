@@ -13,7 +13,7 @@ Public Class HistoryForm
     Private _deviceId As String
     Private _deviceName As String
     Private _historyService As TuyaHistoryService
-    Private _currentPeriod As HistoryPeriod = HistoryPeriod.Last7Days
+    Private _currentPeriod As HistoryPeriod = HistoryPeriod.Last24Hours
 
     ' Contrôles UI
     Private _periodComboBox As ComboBox
@@ -79,11 +79,9 @@ Public Class HistoryForm
             .DropDownStyle = ComboBoxStyle.DropDownList
         }
         _periodComboBox.Items.AddRange(New String() {
-            "Dernières 24 heures",
-            "Derniers 7 jours",
-            "Derniers 30 jours"
+            "Dernières 24 heures"
         })
-        _periodComboBox.SelectedIndex = 1 ' 7 jours par défaut
+        _periodComboBox.SelectedIndex = 0 ' 24h uniquement
         AddHandler _periodComboBox.SelectedIndexChanged, AddressOf PeriodComboBox_SelectedIndexChanged
         headerPanel.Controls.Add(_periodComboBox)
 
@@ -264,11 +262,8 @@ Public Class HistoryForm
         _statsChart.Plot.Axes.Left.Label.FontSize = 12
         _statsChart.Plot.Axes.Left.Label.Bold = True
 
-        ' Titre
-        Dim periodText = If(_currentPeriod = HistoryPeriod.Last24Hours, "Dernières 24 heures",
-                          If(_currentPeriod = HistoryPeriod.Last7Days, "Derniers 7 jours", "Derniers 30 jours"))
-
-        _statsChart.Plot.Title($"Consommation - {periodText}")
+        ' Titre (24h uniquement)
+        _statsChart.Plot.Title("Consommation - Dernières 24 heures")
 
         ' Style
         _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
