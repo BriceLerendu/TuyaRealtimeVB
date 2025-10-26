@@ -197,11 +197,12 @@ Public Class TuyaApiClient
         ' Récupérer la room
         Dim roomInfo = Await GetDeviceRoomAsync(deviceId, token)
 
-        Return New DeviceInfo With {
+        Dim category = GetJsonString(device, "category")
+        Dim deviceInfo As New DeviceInfo With {
             .Id = deviceId,
             .Name = GetJsonString(device, "name"),
             .ProductName = GetJsonString(device, "product_name"),
-            .Category = GetJsonString(device, "category"),
+            .Category = category,
             .Icon = GetJsonString(device, "icon"),
             .IsOnline = GetJsonBool(device, "online"),
             .RoomId = roomInfo.Item1,
@@ -209,6 +210,13 @@ Public Class TuyaApiClient
             .HomeId = homeId,
             .HomeName = homeName
         }
+
+        ' Charger les spécifications si la catégorie est disponible
+        If Not String.IsNullOrEmpty(category) Then
+            deviceInfo.Specifications = GetCachedSpecificationByCategory(category)
+        End If
+
+        Return deviceInfo
     End Function
 
     Private Async Function GetDeviceRoomAsync(deviceId As String, token As String) As Task(Of Tuple(Of String, String))
@@ -959,7 +967,8 @@ Public Class TuyaApiClient
             .RoomId = Nothing,
             .RoomName = Nothing,
             .HomeId = Nothing,
-            .HomeName = Nothing
+            .HomeName = Nothing,
+            .Specifications = Nothing
         }
     End Function
 

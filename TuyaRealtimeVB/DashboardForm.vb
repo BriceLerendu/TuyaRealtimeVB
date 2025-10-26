@@ -814,9 +814,21 @@ Public Class DashboardForm
     End Function
 
     Private Sub ProcessDeviceStatus(card As DeviceCard, status As JToken)
-        If Not (TypeOf status Is JArray) Then Return
+        ' Extraire le JArray depuis le JObject {"result": [...]}
+        Dim statusArray As JArray = Nothing
 
-        For Each item As JToken In CType(status, JArray)
+        If TypeOf status Is JObject Then
+            Dim resultToken = CType(status, JObject)("result")
+            If resultToken IsNot Nothing AndAlso TypeOf resultToken Is JArray Then
+                statusArray = CType(resultToken, JArray)
+            End If
+        ElseIf TypeOf status Is JArray Then
+            statusArray = CType(status, JArray)
+        End If
+
+        If statusArray Is Nothing Then Return
+
+        For Each item As JToken In statusArray
             Dim code = GetJsonString(item, "code")
             Dim value = GetJsonString(item, "value")
 
