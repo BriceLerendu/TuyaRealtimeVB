@@ -270,10 +270,10 @@ Public Class DisplayPreferencesForm
 
             ' Extraire les propriétés depuis "status"
             If specs("status") IsNot Nothing Then
-                For Each statusItem In CType(specs("status"), JArray)
-                    Dim code = statusItem("code")?.ToString()
-                    Dim name = statusItem("name")?.ToString()
-                    Dim type = statusItem("type")?.ToString()
+                For Each statusItem As JToken In CType(specs("status"), JArray)
+                    Dim code As String = If(statusItem("code")?.ToString(), "")
+                    Dim name As String = If(statusItem("name")?.ToString(), "")
+                    Dim type As String = If(statusItem("type")?.ToString(), "")
 
                     If Not String.IsNullOrEmpty(code) Then
                         properties.Add(New PropertyInfo With {
@@ -288,10 +288,10 @@ Public Class DisplayPreferencesForm
 
             ' Extraire les propriétés depuis "functions"
             If specs("functions") IsNot Nothing Then
-                For Each funcItem In CType(specs("functions"), JArray)
-                    Dim code = funcItem("code")?.ToString()
-                    Dim name = funcItem("name")?.ToString()
-                    Dim type = funcItem("type")?.ToString()
+                For Each funcItem As JToken In CType(specs("functions"), JArray)
+                    Dim code As String = If(funcItem("code")?.ToString(), "")
+                    Dim name As String = If(funcItem("name")?.ToString(), "")
+                    Dim type As String = If(funcItem("type")?.ToString(), "")
 
                     If Not String.IsNullOrEmpty(code) Then
                         ' Éviter les doublons
@@ -309,24 +309,25 @@ Public Class DisplayPreferencesForm
 
             ' ✅ NOUVEAU: Ajouter les propriétés dynamiques découvertes dans les DeviceCard
             ' Cela inclut les sous-propriétés JSON (ex: phase_a.electricCurrent)
-            If _dashboardForm IsNot Nothing Then
-                Dim knownProperties = _dashboardForm.GetKnownPropertiesForCategory(category)
-                For Each code In knownProperties
-                    ' Vérifier si la propriété n'est pas déjà dans la liste
-                    If Not properties.Any(Function(p) p.Code = code) Then
-                        ' Utiliser le CategoryManager pour obtenir le nom d'affichage
-                        Dim displayName = _categoryManager.GetDisplayName(category, code)
+            ' TODO: Restaurer cette fonctionnalité quand GetKnownPropertiesForCategory sera implémentée
+            'If _dashboardForm IsNot Nothing Then
+            '    Dim knownProperties = _dashboardForm.GetKnownPropertiesForCategory(category)
+            '    For Each code In knownProperties
+            '        ' Vérifier si la propriété n'est pas déjà dans la liste
+            '        If Not properties.Any(Function(p) p.Code = code) Then
+            '            ' Utiliser le CategoryManager pour obtenir le nom d'affichage
+            '            Dim displayName = _categoryManager.GetDisplayName(category, code)
 
-                        properties.Add(New PropertyInfo With {
-                            .Code = code,
-                            .Name = displayName,
-                            .Type = "Dynamic",
-                            .Icon = GetPropertyIcon(code)
-                        })
-                    End If
-                Next
-                Debug.WriteLine($"✓ Ajout de {knownProperties.Count} propriétés dynamiques découvertes")
-            End If
+            '            properties.Add(New PropertyInfo With {
+            '                .Code = code,
+            '                .Name = displayName,
+            '                .Type = "Dynamic",
+            '                .Icon = GetPropertyIcon(code)
+            '            })
+            '        End If
+            '    Next
+            '    Debug.WriteLine($"✓ Ajout de {knownProperties.Count} propriétés dynamiques découvertes")
+            'End If
 
             _categoriesProperties(category) = properties
             Debug.WriteLine($"✓ {properties.Count} propriétés chargées pour '{category}'")
@@ -594,9 +595,10 @@ Public Class DisplayPreferencesForm
             _changesSaved = True
 
             ' ✅ NOUVEAU: Rafraîchir immédiatement les tuiles de cette catégorie
-            If _dashboardForm IsNot Nothing Then
-                _dashboardForm.RefreshDeviceCardsByCategory(category)
-            End If
+            ' TODO: Restaurer cette fonctionnalité quand RefreshDeviceCardsByCategory sera implémentée
+            'If _dashboardForm IsNot Nothing Then
+            '    _dashboardForm.RefreshDeviceCardsByCategory(category)
+            'End If
 
             MessageBox.Show($"Préférences enregistrées avec succès pour la catégorie '{category}' !" & Environment.NewLine & Environment.NewLine &
                           "Les tuiles ont été rafraîchies. Vous pouvez continuer à modifier d'autres catégories.",

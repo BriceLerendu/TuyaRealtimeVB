@@ -412,9 +412,10 @@ Public Class HistoryForm
         stepLine.MarkerSize = 0
 
         ' Remplissage sous la courbe pour les états ON
-        Dim fill = _statsChart.Plot.Add.Fill(positions.ToArray(), values.ToArray())
-        fill.FillColor = ScottPlot.Color.FromHex("#34C759").WithAlpha(0.3)
-        fill.LineColor = ScottPlot.Colors.Transparent
+        ' TODO: ScottPlot v5 n'a pas de méthode Fill directe - à implémenter autrement si nécessaire
+        'Dim fill = _statsChart.Plot.Add.Fill(positions.ToArray(), values.ToArray())
+        'fill.FillColor = ScottPlot.Color.FromHex("#34C759").WithAlpha(0.3)
+        'fill.LineColor = ScottPlot.Colors.Transparent
 
         ' Configuration axe X
         Dim labels = stats.DataPoints.Select(Function(p) p.Label).ToArray()

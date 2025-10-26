@@ -622,6 +622,6 @@ Public Class DeviceControlForm
 
     Private Function FormatValue(code As String, value As String) As String
         Dim categoryManager = TuyaCategoryManager.Instance
-        Return categoryManager.FormatValueWithScale(_deviceCategory, _deviceId, code, value, _apiClient)
+        Return categoryManager.FormatValue(_deviceCategory, code, value)
     End Function
 End Class
