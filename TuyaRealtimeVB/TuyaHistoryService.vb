@@ -345,9 +345,10 @@ Public Class TuyaHistoryService
                     startTime = endTime.AddDays(-7)
             End Select
 
-            ' ✅ CORRECTION CRITIQUE: Timestamps en MILLISECONDES (pas secondes!)
-            Dim startTimestamp = CLng((startTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
-            Dim endTimestamp = CLng((endTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
+            ' ✅ CORRECTION CRITIQUE: Timestamps en SECONDES (pas millisecondes!)
+            ' Source: CORRECTIONS_HISTORIQUE.md lignes 8-18
+            Dim startTimestamp = CLng((startTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalSeconds)
+            Dim endTimestamp = CLng((endTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalSeconds)
 
             ' 🔧 CONTOURNEMENT BUG PAGINATION TUYA : Diviser en tranches de 4 heures
             Dim logs = Await GetLogsWithTimeSlicesAsync(deviceId, startTimestamp, endTimestamp)
@@ -460,10 +461,10 @@ Public Class TuyaHistoryService
             Dim endpoint = $"/v1.0/devices/{deviceId}/logs"
             Dim allLogs As New List(Of DeviceLog)
 
-            ' type=7 : Data point reported (OBLIGATOIRE selon doc Tuya)
+            ' types=report : Changements d'état et valeurs (CORRECTIONS_HISTORIQUE.md ligne 39)
             ' size=100 : L'API limite à 100 de toute façon
-            ' Format qui FONCTIONNAIT dans commit 84005b4 (pas de start_row_key)
-            Dim queryParams = $"?start_time={startTimestamp}&end_time={endTimestamp}&size=100&type=7"
+            ' Source: CORRECTIONS_HISTORIQUE.md lignes 30-40
+            Dim queryParams = $"?start_time={startTimestamp}&end_time={endTimestamp}&types=report&size=100"
 
             Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
 
