@@ -504,25 +504,25 @@ Public Class TuyaHistoryService
             If logsArray IsNot Nothing Then
                 Log($"    📊 API v1.0 retourné {logsArray.Count} logs")
                 For Each item As JToken In logsArray
-                        Dim jItem = CType(item, JObject)
-                        Dim timestamp = jItem("event_time")?.ToObject(Of Long)()
-                        Dim code = jItem("code")?.ToString()
-                        Dim value = jItem("value")?.ToString()
+                    Dim jItem = CType(item, JObject)
+                    Dim timestamp = jItem("event_time")?.ToObject(Of Long)()
+                    Dim code = jItem("code")?.ToString()
+                    Dim value = jItem("value")?.ToString()
 
-                        If timestamp.HasValue Then
-                            ' event_time est en millisecondes
-                            Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
-                            Dim eventType = DetermineEventType(code, value)
-                            Dim description = CreateEventDescription(code, value, eventType)
+                    If timestamp.HasValue Then
+                        ' event_time est en millisecondes
+                        Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
+                        Dim eventType = DetermineEventType(code, value)
+                        Dim description = CreateEventDescription(code, value, eventType)
 
-                            allLogs.Add(New DeviceLog With {
+                        allLogs.Add(New DeviceLog With {
                                 .EventTime = dt,
                                 .Code = code,
                                 .Value = value,
                                 .EventType = eventType,
                                 .Description = description
                             })
-                        End If
+                    End If
                 Next
             Else
                 Log($"    ⚠️ API v1.0 logsArray = null")

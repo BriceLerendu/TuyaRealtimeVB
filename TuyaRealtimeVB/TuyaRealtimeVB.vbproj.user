@@ -10,6 +10,9 @@
     <Compile Update="AutomationForm.vb">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Update="CategoryConfigForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Update="DashboardForm.vb">
       <SubType>Form</SubType>
     </Compile>
@@ -26,6 +29,9 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Update="HomeAdminForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="IconPickerForm.vb">
       <SubType>Form</SubType>
     </Compile>
     <Compile Update="MainForm.vb">
