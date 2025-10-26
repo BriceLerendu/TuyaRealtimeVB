@@ -182,9 +182,8 @@ Public Class TuyaHistoryService
 
             ' Endpoint API Tuya pour logs
             Dim endpoint = $"/v1.0/devices/{deviceId}/logs"
-            ' type=7 : Data point reported (switch, power, etc.) - OBLIGATOIRE selon doc Tuya
-            ' query_type=1 : Free edition (7 jours de rétention)
-            Dim queryParams = $"?start_time={startTimestamp}&end_time={endTimestamp}&size=100&type=7&query_type=1"
+            ' types=report : Changements d'état et valeurs (PLURIEL, pas singulier!)
+            Dim queryParams = $"?start_time={startTimestamp}&end_time={endTimestamp}&size=100&types=report"
 
             Log($"Récupération logs: {deviceId}, période: {period}")
 
