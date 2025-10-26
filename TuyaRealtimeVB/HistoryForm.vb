@@ -509,8 +509,8 @@ Public Class HistoryForm
             ' Styling des barres
             For Each bar In barPlot.Bars
                 bar.FillColor = ScottPlot.Color.FromHex("#FF9500") ' Orange vif
-                bar.BorderColor = ScottPlot.Color.FromHex("#FF6B00")
-                bar.BorderLineWidth = 1
+                bar.LineColor = ScottPlot.Color.FromHex("#FF6B00")
+                bar.LineWidth = 1
                 bar.Size = barWidth * 0.8 ' 80% de la largeur du bin pour laisser un peu d'espace
             Next
 
