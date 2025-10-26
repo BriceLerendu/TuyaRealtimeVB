@@ -743,15 +743,7 @@ Public Class TuyaApiClient
         Dim nonce = Guid.NewGuid().ToString("N")
         Dim path = New Uri(url).PathAndQuery
 
-        Log($"🔐 Signature Debug - URL: {url}")
-        Log($"🔐 Signature Debug - Path: {path}")
-        Log($"🔐 Signature Debug - Method: {httpMethod}, BodyHash: {bodyHash}")
-        Log($"🔐 Signature Debug - Timestamp: {t}, Nonce: {nonce}")
-        Log($"🔐 Signature Debug - Token: {If(String.IsNullOrEmpty(token), "VIDE !!!", token.Substring(0, Math.Min(20, token.Length)) & "...")}")
-        Log($"🔐 Signature Debug - ClientId: {_cfg.AccessId}")
-
         Dim sign = CalculateSignature(httpMethod, bodyHash, path, token, t, nonce)
-        Log($"🔐 Signature Debug - Sign: {sign}")
 
         client.DefaultRequestHeaders.Add("client_id", _cfg.AccessId)
         client.DefaultRequestHeaders.Add("access_token", token)
@@ -786,11 +778,6 @@ Public Class TuyaApiClient
         ' Construire la chaîne finale à signer :
         ' client_id + access_token + timestamp + nonce + stringToSign
         Dim toSign = _cfg.AccessId & token & timestamp.ToString() & nonce & stringToSign
-
-        ' Debug détaillé
-        Log($"🔐 StringToSign: {stringToSign.Replace(vbLf, "\\n")}")
-        Log($"🔐 ToSign: {toSign.Replace(vbLf, "\\n").Substring(0, Math.Min(100, toSign.Length))}...")
-        Log($"🔐 AccessSecret length: {_cfg.AccessSecret.Length}")
 
         Return TuyaTokenProvider.HmacSha256Upper(toSign, _cfg.AccessSecret)
     End Function
