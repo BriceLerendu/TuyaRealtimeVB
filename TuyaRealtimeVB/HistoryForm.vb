@@ -239,7 +239,120 @@ Public Class HistoryForm
     End Sub
 
     Private Sub DrawStatisticsChart(stats As DeviceStatistics)
-        ' Réinitialiser le graphique
+        ' Dispatcher selon le type de visualisation détecté automatiquement
+        Select Case stats.VisualizationType
+            Case SensorVisualizationType.NumericContinuous
+                DrawNumericChart(stats)
+            Case SensorVisualizationType.BinaryState
+                DrawBinaryStateChart(stats)
+            Case SensorVisualizationType.DiscreteEvents
+                DrawDiscreteEventsChart(stats)
+            Case Else
+                ' Fallback: afficher comme numérique
+                DrawNumericChart(stats)
+        End Select
+    End Sub
+
+    ''' <summary>
+    ''' Affiche un graphique en courbe pour les valeurs numériques continues
+    ''' (température, humidité, puissance, tension, etc.)
+    ''' </summary>
+    Private Sub DrawNumericChart(stats As DeviceStatistics)
+        _statsChart.Plot.Clear()
+
+        ' Extraire données
+        Dim timestamps = stats.DataPoints.Select(Function(p) p.Timestamp.ToOADate()).ToArray()
+        Dim values = stats.DataPoints.Select(Function(p) p.Value).ToArray()
+
+        ' Créer graphique en courbe lisse
+        Dim scatter = _statsChart.Plot.Add.Scatter(timestamps, values)
+        scatter.Color = ScottPlot.Color.FromHex("#2E5BFF") ' Bleu Tuya
+        scatter.LineWidth = 2.5
+        scatter.MarkerSize = 6
+        scatter.Smooth = True ' Courbe lissée pour meilleure lisibilité
+
+        ' Configuration de l'axe X (temps)
+        _statsChart.Plot.Axes.DateTimeTicksBottom()
+
+        ' Label de l'axe Y avec unité
+        Dim yAxisLabel = GetYAxisLabel(stats.Code, stats.Unit)
+        _statsChart.Plot.Axes.Left.Label.Text = yAxisLabel
+        _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
+        _statsChart.Plot.Axes.Left.Label.FontSize = 12
+        _statsChart.Plot.Axes.Left.Label.Bold = True
+
+        ' Titre adapté au type de donnée
+        Dim title = GetChartTitle(stats.Code)
+        _statsChart.Plot.Title(title)
+        _statsChart.Plot.Title.Label.FontSize = 14
+        _statsChart.Plot.Title.Label.Bold = True
+        _statsChart.Plot.Title.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
+
+        ' Style
+        _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
+        _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+        _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+
+        _statsChart.Refresh()
+    End Sub
+
+    ''' <summary>
+    ''' Affiche un graphique en escalier pour les états binaires
+    ''' (switch on/off, porte ouverte/fermée, contact, etc.)
+    ''' </summary>
+    Private Sub DrawBinaryStateChart(stats As DeviceStatistics)
+        _statsChart.Plot.Clear()
+
+        ' Extraire données
+        Dim timestamps = stats.DataPoints.Select(Function(p) p.Timestamp.ToOADate()).ToArray()
+        Dim values = stats.DataPoints.Select(Function(p) p.Value).ToArray()
+
+        ' Créer graphique en escalier (step plot)
+        Dim scatter = _statsChart.Plot.Add.Scatter(timestamps, values)
+        scatter.Color = ScottPlot.Color.FromHex("#34C759") ' Vert iOS pour état actif
+        scatter.LineWidth = 3
+        scatter.MarkerSize = 0
+        scatter.LinePattern = ScottPlot.LinePattern.Solid
+
+        ' Remplir la zone sous la courbe pour mieux visualiser l'état actif
+        Dim fill = _statsChart.Plot.Add.FillY(timestamps, values, ScottPlot.Color.FromHex("#34C759").WithAlpha(0.2))
+
+        ' Configuration de l'axe X (temps)
+        _statsChart.Plot.Axes.DateTimeTicksBottom()
+
+        ' Configuration de l'axe Y (0 = inactif, 1 = actif)
+        _statsChart.Plot.Axes.Left.Min = -0.1
+        _statsChart.Plot.Axes.Left.Max = 1.1
+        _statsChart.Plot.Axes.Left.Label.Text = "État"
+        _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
+        _statsChart.Plot.Axes.Left.Label.FontSize = 12
+        _statsChart.Plot.Axes.Left.Label.Bold = True
+
+        ' Ticks personnalisés pour l'axe Y
+        Dim tickPositions As Double() = {0.0, 1.0}
+        Dim tickLabels As String() = {"Inactif", "Actif"}
+        _statsChart.Plot.Axes.Left.TickGenerator = New ScottPlot.TickGenerators.NumericManual(tickPositions, tickLabels)
+
+        ' Titre adapté
+        Dim title = GetChartTitle(stats.Code)
+        _statsChart.Plot.Title(title)
+        _statsChart.Plot.Title.Label.FontSize = 14
+        _statsChart.Plot.Title.Label.Bold = True
+        _statsChart.Plot.Title.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
+
+        ' Style
+        _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
+        _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+        _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+
+        _statsChart.Refresh()
+    End Sub
+
+    ''' <summary>
+    ''' Affiche un graphique en barres pour les événements discrets
+    ''' (PIR, détection de fumée, alarme, tamper, etc.)
+    ''' </summary>
+    Private Sub DrawDiscreteEventsChart(stats As DeviceStatistics)
         _statsChart.Plot.Clear()
 
         ' Extraire données
@@ -249,7 +362,7 @@ Public Class HistoryForm
 
         ' Créer graphique en barres
         Dim bar = _statsChart.Plot.Add.Bars(positions, values)
-        bar.Color = ScottPlot.Color.FromHex("#2E5BFF") ' Bleu Tuya
+        bar.Color = ScottPlot.Color.FromHex("#FF9500") ' Orange pour attirer l'attention sur les événements
 
         ' Configuration des axes
         _statsChart.Plot.Axes.Bottom.TickGenerator = New ScottPlot.TickGenerators.NumericManual(
@@ -257,13 +370,23 @@ Public Class HistoryForm
         )
 
         _statsChart.Plot.Axes.Bottom.MajorTickStyle.Length = 0
-        _statsChart.Plot.Axes.Left.Label.Text = $"Consommation ({stats.Unit})"
+        _statsChart.Plot.Axes.Left.Label.Text = "Nombre d'événements"
         _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
         _statsChart.Plot.Axes.Left.Label.FontSize = 12
         _statsChart.Plot.Axes.Left.Label.Bold = True
 
-        ' Titre (24h uniquement)
-        _statsChart.Plot.Title("Consommation - Dernières 24 heures")
+        ' Titre avec informations supplémentaires
+        Dim title = GetChartTitle(stats.Code)
+        If stats.TotalEvents > 0 Then
+            title &= $" ({stats.TotalEvents} total)"
+            If Not String.IsNullOrEmpty(stats.PeakActivityHour) Then
+                title &= $" - Pic: {stats.PeakActivityHour}"
+            End If
+        End If
+        _statsChart.Plot.Title(title)
+        _statsChart.Plot.Title.Label.FontSize = 14
+        _statsChart.Plot.Title.Label.Bold = True
+        _statsChart.Plot.Title.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
 
         ' Style
         _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
@@ -272,6 +395,75 @@ Public Class HistoryForm
 
         _statsChart.Refresh()
     End Sub
+
+    ''' <summary>
+    ''' Détermine le label de l'axe Y selon le code DP
+    ''' </summary>
+    Private Function GetYAxisLabel(code As String, unit As String) As String
+        Dim codeLower = code.ToLower()
+
+        ' Labels spécifiques selon le type de capteur
+        If codeLower.Contains("temp") Then
+            Return $"Température ({unit})"
+        ElseIf codeLower.Contains("humid") Then
+            Return $"Humidité ({unit})"
+        ElseIf codeLower.Contains("power") OrElse codeLower.Contains("phase") Then
+            Return $"Puissance ({unit})"
+        ElseIf codeLower.Contains("voltage") Then
+            Return $"Tension ({unit})"
+        ElseIf codeLower.Contains("current") Then
+            Return $"Courant ({unit})"
+        ElseIf codeLower.Contains("energy") OrElse codeLower.Contains("ele") Then
+            Return $"Énergie ({unit})"
+        ElseIf codeLower.Contains("battery") Then
+            Return $"Batterie ({unit})"
+        ElseIf codeLower.Contains("bright") OrElse codeLower.Contains("lux") Then
+            Return $"Luminosité ({unit})"
+        ElseIf Not String.IsNullOrEmpty(unit) Then
+            Return $"{code} ({unit})"
+        Else
+            Return code
+        End If
+    End Function
+
+    ''' <summary>
+    ''' Détermine le titre du graphique selon le code DP
+    ''' </summary>
+    Private Function GetChartTitle(code As String) As String
+        Dim codeLower = code.ToLower()
+        Dim periodText = "Dernières 24 heures"
+
+        ' Titres spécifiques selon le type de capteur
+        If codeLower.Contains("temp") Then
+            Return $"Température - {periodText}"
+        ElseIf codeLower.Contains("humid") Then
+            Return $"Humidité - {periodText}"
+        ElseIf codeLower.Contains("power") OrElse codeLower.Contains("phase") Then
+            Return $"Consommation - {periodText}"
+        ElseIf codeLower.Contains("voltage") Then
+            Return $"Tension - {periodText}"
+        ElseIf codeLower.Contains("current") Then
+            Return $"Courant - {periodText}"
+        ElseIf codeLower.Contains("energy") OrElse codeLower.Contains("ele") Then
+            Return $"Énergie cumulée - {periodText}"
+        ElseIf codeLower.Contains("battery") Then
+            Return $"Niveau de batterie - {periodText}"
+        ElseIf codeLower.Contains("bright") OrElse codeLower.Contains("lux") Then
+            Return $"Luminosité - {periodText}"
+        ElseIf codeLower.Contains("switch") Then
+            Return $"État du switch - {periodText}"
+        ElseIf codeLower.Contains("door") OrElse codeLower.Contains("contact") Then
+            Return $"État du capteur - {periodText}"
+        ElseIf codeLower.Contains("pir") OrElse codeLower.Contains("motion") Then
+            Return $"Détections de mouvement - {periodText}"
+        ElseIf codeLower.Contains("smoke") Then
+            Return $"Détections de fumée - {periodText}"
+        ElseIf codeLower.Contains("tamper") Then
+            Return $"Alertes tamper - {periodText}"
+        Else
+            Return $"{code} - {periodText}"
+        End If
+    End Function
 
     Private Sub DrawNoDataMessage(message As String)
         _statsChart.Plot.Clear()
