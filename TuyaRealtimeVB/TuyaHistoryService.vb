@@ -75,6 +75,22 @@ Public Class TuyaHistoryService
                 Log($"⚠️ Aucune donnée avec '{code}'")
             Next
 
+            ' ✅ NOUVEAU : Si aucun code prioritaire ne fonctionne, détecter automatiquement les codes disponibles
+            Log($"💡 Détection automatique des codes DP disponibles...")
+            Dim autoStats = Await AutoDetectAndGetStatisticsAsync(deviceId, period)
+
+            If autoStats IsNot Nothing AndAlso autoStats.DataPoints.Count > 0 Then
+                Log($"✅ Statistiques créées automatiquement avec code '{autoStats.Code}' ({autoStats.DataPoints.Count} points)")
+
+                ' Mettre en cache
+                _statisticsCache(cacheKey) = New CachedStatistics With {
+                    .Data = autoStats,
+                    .Timestamp = DateTime.Now
+                }
+
+                Return autoStats
+            End If
+
             Log($"❌ Aucune donnée trouvée pour {deviceId} avec tous les codes testés")
             Return Nothing
 
@@ -122,6 +138,86 @@ Public Class TuyaHistoryService
 
         Catch ex As Exception
             Log($"  ❌ Exception pour code '{code}': {ex.Message}")
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Détecte automatiquement les codes DP disponibles et retourne des statistiques pour le premier code valide
+    ''' Utilisé quand aucun des codes prioritaires (cur_power, add_ele, switch_1) ne fonctionne
+    ''' </summary>
+    Private Async Function AutoDetectAndGetStatisticsAsync(
+        deviceId As String,
+        period As HistoryPeriod
+    ) As Task(Of DeviceStatistics)
+
+        Try
+            ' Récupérer les logs pour analyser les codes disponibles
+            Dim logs = Await GetDeviceLogsAsync(deviceId, period)
+
+            If logs Is Nothing OrElse logs.Count = 0 Then
+                Log($"  ⚠️ Aucun log disponible pour la détection automatique")
+                Return Nothing
+            End If
+
+            ' Extraire tous les codes DP uniques des logs
+            Dim availableCodes = logs.Where(Function(l) Not String.IsNullOrEmpty(l.Code)) _
+                                    .Select(Function(l) l.Code) _
+                                    .Distinct() _
+                                    .ToList()
+
+            Log($"  🔍 Codes DP disponibles détectés: {String.Join(", ", availableCodes)}")
+
+            If availableCodes.Count = 0 Then
+                Log($"  ⚠️ Aucun code DP trouvé dans les logs")
+                Return Nothing
+            End If
+
+            ' Ordre de priorité pour les types de capteurs
+            Dim priorityPatterns As String() = {
+                "temperature", "temp",           ' Température en priorité
+                "humidity", "hum",               ' Humidité
+                "power", "current", "voltage",   ' Électrique
+                "battery",                       ' Batterie
+                "bright", "lux"                  ' Luminosité
+            }
+
+            ' Trier les codes selon la priorité
+            Dim sortedCodes As New List(Of String)
+
+            ' D'abord ajouter les codes qui matchent les patterns prioritaires
+            For Each pattern In priorityPatterns
+                For Each code In availableCodes
+                    If code.ToLower().Contains(pattern) AndAlso Not sortedCodes.Contains(code) Then
+                        sortedCodes.Add(code)
+                    End If
+                Next
+            Next
+
+            ' Puis ajouter les codes restants
+            For Each code In availableCodes
+                If Not sortedCodes.Contains(code) Then
+                    sortedCodes.Add(code)
+                End If
+            Next
+
+            ' Essayer chaque code jusqu'à trouver des données valides
+            For Each code In sortedCodes
+                Log($"  🔬 Test du code auto-détecté: '{code}'...")
+
+                Dim stats = CalculateStatisticsFromLogs(deviceId, code, logs, period)
+
+                If stats IsNot Nothing AndAlso stats.DataPoints.Count > 0 Then
+                    Log($"  ✅ Statistiques créées avec code auto-détecté '{code}' ({stats.DataPoints.Count} points)")
+                    Return stats
+                End If
+            Next
+
+            Log($"  ⚠️ Aucun code valide trouvé parmi: {String.Join(", ", sortedCodes)}")
+            Return Nothing
+
+        Catch ex As Exception
+            Log($"  ❌ Exception AutoDetectAndGetStatisticsAsync: {ex.Message}")
             Return Nothing
         End Try
     End Function
