@@ -1,6 +1,5 @@
 Imports System
 Imports System.Net.Http
-Imports Newtonsoft.Json
 Imports Newtonsoft.Json.Linq
 
 ''' <summary>
@@ -16,44 +15,13 @@ Public Class TuyaHistoryService
     End Sub
 
     ''' <summary>
-    ''' Récupère les statistiques d'un appareil sur une période en essayant plusieurs codes
+    ''' Récupère les statistiques d'un appareil sur une période
     ''' </summary>
     ''' <param name="deviceId">ID de l'appareil</param>
-    ''' <param name="period">Période de temps</param>
+    ''' <param name="period">Période de temps à récupérer</param>
     ''' <param name="code">Code de la propriété (ex: "cur_power", "va_temperature")</param>
-    ''' <param name="category">Catégorie de l'appareil (pour unité et conversion)</param>
+    ''' <param name="category">Catégorie de l'appareil pour déterminer l'unité</param>
     Public Async Function GetDeviceStatisticsAsync(
-        deviceId As String,
-        period As HistoryPeriod,
-        code As String,
-        category As String
-    ) As Task(Of DeviceStatistics)
-        ' Essayer le code spécifié d'abord
-        Dim stats = Await GetDeviceStatisticsForCodeAsync(deviceId, period, code, category)
-
-        ' Si aucune donnée, essayer d'autres codes courants
-        If stats Is Nothing OrElse stats.DataPoints.Count = 0 Then
-            Log($"🔄 Tentative avec d'autres codes courants...")
-            Dim alternativeCodes = {"add_ele", "cur_voltage", "cur_current", "switch_1"}
-
-            For Each altCode In alternativeCodes
-                If altCode <> code Then
-                    stats = Await GetDeviceStatisticsForCodeAsync(deviceId, period, altCode, category)
-                    If stats IsNot Nothing AndAlso stats.DataPoints.Count > 0 Then
-                        Log($"✅ Données trouvées avec le code '{altCode}'!")
-                        Exit For
-                    End If
-                End If
-            Next
-        End If
-
-        Return stats
-    End Function
-
-    ''' <summary>
-    ''' Récupère les statistiques pour un code spécifique
-    ''' </summary>
-    Private Async Function GetDeviceStatisticsForCodeAsync(
         deviceId As String,
         period As HistoryPeriod,
         code As String,
@@ -61,111 +29,218 @@ Public Class TuyaHistoryService
     ) As Task(Of DeviceStatistics)
 
         Try
-            Dim endDate = DateTime.Now.Date
-            Dim startDate As DateTime
-
-            ' Définir la période
-            Select Case period
-                Case HistoryPeriod.Last24Hours
-                    startDate = endDate.AddDays(-1)
-                Case HistoryPeriod.Last7Days
-                    startDate = endDate.AddDays(-7)
-                Case HistoryPeriod.Last30Days
-                    startDate = endDate.AddDays(-30)
-                Case Else
-                    startDate = endDate.AddDays(-7)
-            End Select
-
-            ' Convertir en format yyyyMMdd (selon documentation Tuya)
-            Dim startDay = startDate.ToString("yyyyMMdd")
-            Dim endDay = endDate.ToString("yyyyMMdd")
-
-            ' Endpoint API Tuya pour statistiques par jours
-            Dim endpoint = $"/v1.0/devices/{deviceId}/statistics/days"
-            Dim queryParams = $"?code={code}&start_day={startDay}&end_day={endDay}&stat_type=sum"
-
-            Log($"Récupération statistiques: {deviceId}, période: {period} ({startDay} → {endDay})")
-
-            ' Appel API
-            Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
-
-            ' Log de la réponse complète pour débogage
-            If response IsNot Nothing Then
-                Log($"📥 Réponse API: {response.ToString(Formatting.None)}")
-            Else
-                Log($"❌ Réponse API est Nothing")
+            ' Obtenir l'unité depuis le TuyaCategoryManager
+            Dim unit = TuyaCategoryManager.Instance.GetPropertyUnit(category, code)
+            If String.IsNullOrEmpty(unit) Then
+                ' Unités par défaut selon le code
+                unit = GetDefaultUnit(code)
             End If
 
-            If response IsNot Nothing AndAlso response("success")?.ToObject(Of Boolean)() = True Then
-                Dim result = response("result")
+            Dim stats As New DeviceStatistics With {
+                .DeviceId = deviceId,
+                .StatType = "sum",
+                .Code = code,
+                .Unit = unit,
+                .DataPoints = New List(Of StatisticPoint)
+            }
 
-                ' Obtenir l'unité depuis le TuyaCategoryManager
-                Dim unit = TuyaCategoryManager.Instance.GetPropertyUnit(category, code)
-                If String.IsNullOrEmpty(unit) Then
-                    ' Unité par défaut selon le code
-                    unit = GetDefaultUnit(code)
-                End If
-
-                Dim stats As New DeviceStatistics With {
-                    .DeviceId = deviceId,
-                    .StatType = "sum",
-                    .Code = code,
-                    .Unit = unit,
-                    .DataPoints = New List(Of StatisticPoint)
-                }
-
-                ' Parser les points de données
-                ' Format réponse: { "result": { "days": { "20190101": "0.5", "20190102": "1.2" } } }
-                If result IsNot Nothing Then
-                    Dim daysData = TryCast(result("days"), JObject)
-                    If daysData IsNot Nothing Then
-                        For Each prop As JProperty In daysData.Properties()
-                            Dim dateKey = prop.Name  ' Format: "yyyyMMdd"
-                            Dim valueStr = prop.Value?.ToString()
-
-                            If Not String.IsNullOrEmpty(dateKey) AndAlso Not String.IsNullOrEmpty(valueStr) Then
-                                ' Parser la date (format yyyyMMdd)
-                                Dim dt As DateTime
-                                If DateTime.TryParseExact(dateKey, "yyyyMMdd", Nothing,
-                                                         Globalization.DateTimeStyles.None, dt) Then
-                                    Dim value As Double
-                                    If Double.TryParse(valueStr, Globalization.NumberStyles.Any,
-                                                      Globalization.CultureInfo.InvariantCulture, value) Then
-                                        ' Appliquer la conversion depuis la config
-                                        value = ApplyPropertyConversion(category, code, value)
-
-                                        stats.DataPoints.Add(New StatisticPoint With {
-                                            .Timestamp = dt,
-                                            .Value = value,
-                                            .Label = dt.ToString("dd/MM")
-                                        })
-                                    End If
-                                End If
-                            End If
-                        Next
-                    End If
-                End If
-
-                ' Trier par date
-                stats.DataPoints.Sort(Function(a, b) a.Timestamp.CompareTo(b.Timestamp))
-
-                If stats.DataPoints.Count = 0 Then
-                    Log($"⚠️ 0 points de données pour le code '{code}'. L'appareil ne mesure peut-être pas cette donnée.")
-                    Log($"💡 Essayez avec d'autres codes: add_ele, cur_voltage, cur_current")
-                Else
-                    Log($"✅ {stats.DataPoints.Count} points de données récupérés pour '{code}'")
-                End If
-                Return stats
+            ' Pour Last24Hours, utiliser /statistics/hours avec découpage
+            If period = HistoryPeriod.Last24Hours Then
+                stats = Await GetHourlyStatisticsAsync(deviceId, code, category, unit)
             Else
-                Dim errorMsg = If(response?("msg")?.ToString(), "Erreur inconnue")
-                Log($"❌ Erreur API statistiques: {errorMsg}")
-                Return Nothing
+                ' Pour 7 jours et 30 jours, utiliser /statistics/days (pas de découpage nécessaire)
+                stats = Await GetDailyStatisticsAsync(deviceId, period, code, category, unit)
             End If
+
+            Log($"✅ {stats.DataPoints.Count} points de données récupérés")
+            Return stats
 
         Catch ex As Exception
             Log($"❌ Exception GetDeviceStatisticsAsync: {ex.Message}")
             Return Nothing
         End Try
+    End Function
+
+    ''' <summary>
+    ''' Récupère les statistiques horaires pour les dernières 24h (avec découpage par périodes de 2h)
+    ''' </summary>
+    Private Async Function GetHourlyStatisticsAsync(
+        deviceId As String,
+        code As String,
+        category As String,
+        unit As String
+    ) As Task(Of DeviceStatistics)
+
+        Dim stats As New DeviceStatistics With {
+            .DeviceId = deviceId,
+            .StatType = "sum",
+            .Code = code,
+            .Unit = unit,
+            .DataPoints = New List(Of StatisticPoint)
+        }
+
+        Try
+            Dim endTime = DateTime.Now
+            Dim startTime = endTime.AddHours(-24)
+
+            ' L'API limite à 100 valeurs par appel
+            ' On découpe en périodes de 2h (24h / 12 périodes = ~2h chacune)
+            Dim chunkHours = 2
+            Dim chunksCount = CInt(Math.Ceiling(24.0 / chunkHours))
+
+            Log($"Récupération statistiques horaires sur 24h: {deviceId}, code: {code}")
+            Log($"  → Découpage en {chunksCount} périodes de {chunkHours}h")
+
+            For chunkIndex = 0 To chunksCount - 1
+                Dim chunkEndTime = endTime.AddHours(-chunkIndex * chunkHours)
+                Dim chunkStartTime = chunkEndTime.AddHours(-chunkHours)
+
+                ' Ne pas dépasser les 24h
+                If chunkStartTime < startTime Then
+                    chunkStartTime = startTime
+                End If
+
+                ' Convertir en timestamps Unix (millisecondes)
+                Dim startTimestamp = CLng((chunkStartTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
+                Dim endTimestamp = CLng((chunkEndTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
+
+                ' Endpoint API Tuya pour statistiques horaires
+                Dim endpoint = $"/v1.0/devices/{deviceId}/statistics/hours"
+                Dim queryParams = $"?code={code}&start_time={startTimestamp}&end_time={endTimestamp}&type=sum"
+
+                Log($"  → Période {chunkIndex + 1}/{chunksCount}: {chunkStartTime:HH:mm} - {chunkEndTime:HH:mm}")
+
+                ' Appel API
+                Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
+
+                If response IsNot Nothing AndAlso response("success")?.ToObject(Of Boolean)() = True Then
+                    Dim result = response("result")
+
+                    ' Parser les points de données
+                    If result IsNot Nothing AndAlso TypeOf result Is JArray Then
+                        For Each item As JToken In CType(result, JArray)
+                            Dim jItem = CType(item, JObject)
+                            Dim timestamp = jItem("time")?.ToObject(Of Long)()
+                            Dim value = jItem("value")?.ToString()
+
+                            If timestamp.HasValue AndAlso Not String.IsNullOrEmpty(value) Then
+                                Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
+
+                                ' Convertir la valeur en tenant compte du diviseur
+                                Dim numValue As Double = 0
+                                If Double.TryParse(value, numValue) Then
+                                    ' Appliquer la conversion depuis la config
+                                    numValue = ApplyPropertyConversion(category, code, numValue)
+                                End If
+
+                                stats.DataPoints.Add(New StatisticPoint With {
+                                    .Timestamp = dt,
+                                    .Value = numValue,
+                                    .Label = dt.ToString("HH:mm")  ' Format horaire
+                                })
+                            End If
+                        Next
+                    End If
+                Else
+                    Dim errorMsg = If(response?("msg")?.ToString(), "Erreur inconnue")
+                    Log($"    ⚠️ Erreur API pour cette période: {errorMsg}")
+                End If
+            Next
+
+            ' Trier par timestamp
+            stats.DataPoints = stats.DataPoints.OrderBy(Function(p) p.Timestamp).ToList()
+
+        Catch ex As Exception
+            Log($"❌ Exception GetHourlyStatisticsAsync: {ex.Message}")
+        End Try
+
+        Return stats
+    End Function
+
+    ''' <summary>
+    ''' Récupère les statistiques journalières pour 7 ou 30 jours
+    ''' </summary>
+    Private Async Function GetDailyStatisticsAsync(
+        deviceId As String,
+        period As HistoryPeriod,
+        code As String,
+        category As String,
+        unit As String
+    ) As Task(Of DeviceStatistics)
+
+        Dim stats As New DeviceStatistics With {
+            .DeviceId = deviceId,
+            .StatType = "sum",
+            .Code = code,
+            .Unit = unit,
+            .DataPoints = New List(Of StatisticPoint)
+        }
+
+        Try
+            Dim endTime = DateTime.Now
+            Dim startTime As DateTime
+
+            ' Définir la période
+            Select Case period
+                Case HistoryPeriod.Last7Days
+                    startTime = endTime.AddDays(-7)
+                Case HistoryPeriod.Last30Days
+                    startTime = endTime.AddDays(-30)
+                Case Else
+                    startTime = endTime.AddDays(-7)
+            End Select
+
+            ' Convertir en timestamps Unix (millisecondes)
+            Dim startTimestamp = CLng((startTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
+            Dim endTimestamp = CLng((endTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
+
+            ' Endpoint API Tuya pour statistiques journalières
+            Dim endpoint = $"/v1.0/devices/{deviceId}/statistics/days"
+            Dim queryParams = $"?code={code}&start_time={startTimestamp}&end_time={endTimestamp}&type=sum"
+
+            Log($"Récupération statistiques journalières: {deviceId}, code: {code}, période: {period}")
+
+            ' Appel API
+            Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
+
+            If response IsNot Nothing AndAlso response("success")?.ToObject(Of Boolean)() = True Then
+                Dim result = response("result")
+
+                ' Parser les points de données
+                If result IsNot Nothing AndAlso TypeOf result Is JArray Then
+                    For Each item As JToken In CType(result, JArray)
+                        Dim jItem = CType(item, JObject)
+                        Dim timestamp = jItem("time")?.ToObject(Of Long)()
+                        Dim value = jItem("value")?.ToString()
+
+                        If timestamp.HasValue AndAlso Not String.IsNullOrEmpty(value) Then
+                            Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
+
+                            ' Convertir la valeur en tenant compte du diviseur
+                            Dim numValue As Double = 0
+                            If Double.TryParse(value, numValue) Then
+                                ' Appliquer la conversion depuis la config
+                                numValue = ApplyPropertyConversion(category, code, numValue)
+                            End If
+
+                            stats.DataPoints.Add(New StatisticPoint With {
+                                .Timestamp = dt,
+                                .Value = numValue,
+                                .Label = dt.ToString("dd/MM")  ' Format journalier
+                            })
+                        End If
+                    Next
+                End If
+            Else
+                Dim errorMsg = If(response?("msg")?.ToString(), "Erreur inconnue")
+                Log($"❌ Erreur API statistiques: {errorMsg}")
+            End If
+
+        Catch ex As Exception
+            Log($"❌ Exception GetDailyStatisticsAsync: {ex.Message}")
+        End Try
+
+        Return stats
     End Function
 
     ''' <summary>
