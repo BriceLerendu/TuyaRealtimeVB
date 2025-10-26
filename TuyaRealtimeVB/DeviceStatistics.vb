@@ -30,19 +30,19 @@ Public Class DeviceStatistics
     Public Property Code As String
 
     ''' <summary>
-    ''' Type de visualisation adapté aux données
+    ''' Type de visualisation adapté au capteur
     ''' </summary>
     Public Property VisualizationType As SensorVisualizationType = SensorVisualizationType.NumericContinuous
 
     ''' <summary>
-    ''' Nombre total d'événements (pour DiscreteEvents)
+    ''' Nombre total d'événements (pour les capteurs d'événements)
     ''' </summary>
-    Public Property TotalEvents As Integer
+    Public Property TotalEvents As Integer = 0
 
     ''' <summary>
-    ''' Heure de pic d'activité (pour DiscreteEvents)
+    ''' Heure du pic d'activité (pour les capteurs d'événements)
     ''' </summary>
-    Public Property PeakActivityHour As String
+    Public Property PeakActivityHour As String = ""
 End Class
 
 ''' <summary>
@@ -110,15 +110,15 @@ Public Enum HistoryPeriod
 End Enum
 
 ''' <summary>
-''' Type de visualisation adaptée aux données du capteur
+''' Type de visualisation pour le capteur
 ''' </summary>
 Public Enum SensorVisualizationType
-    ''' <summary>Valeurs numériques continues (température, puissance, etc.)</summary>
+    ''' <summary>Valeurs numériques continues (température, humidité, tension, etc.) → Courbe</summary>
     NumericContinuous = 0
 
-    ''' <summary>États binaires (switch on/off, porte ouverte/fermée, etc.)</summary>
+    ''' <summary>États binaires (porte, switch, contact) → Graphique en escalier</summary>
     BinaryState = 1
 
-    ''' <summary>Événements ponctuels (détections PIR, alarmes, etc.)</summary>
+    ''' <summary>Événements ponctuels (PIR, fumée, tamper, alarme) → Barres d'occurrences</summary>
     DiscreteEvents = 2
 End Enum
