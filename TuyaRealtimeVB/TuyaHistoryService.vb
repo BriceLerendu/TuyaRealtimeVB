@@ -345,10 +345,11 @@ Public Class TuyaHistoryService
                     startTime = endTime.AddDays(-7)
             End Select
 
-            ' ✅ CORRECTION CRITIQUE: Timestamps en SECONDES (pas millisecondes!)
-            ' Source: CORRECTIONS_HISTORIQUE.md lignes 8-18
-            Dim startTimestamp = CLng((startTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalSeconds)
-            Dim endTimestamp = CLng((endTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalSeconds)
+            ' ✅ CORRECTION CRITIQUE: Timestamps en MILLISECONDES pour l'endpoint /v1.0/devices/{id}/logs
+            ' Source: Documentation officielle Tuya Device Management API
+            ' https://developer.tuya.com/en/docs/cloud/device-management?id=K9g6rfntdz78a
+            Dim startTimestamp = CLng((startTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
+            Dim endTimestamp = CLng((endTime.ToUniversalTime() - New DateTime(1970, 1, 1)).TotalMilliseconds)
 
             ' 🔧 CONTOURNEMENT BUG PAGINATION TUYA : Diviser en tranches de 4 heures
             Dim logs = Await GetLogsWithTimeSlicesAsync(deviceId, startTimestamp, endTimestamp)
@@ -400,15 +401,15 @@ Public Class TuyaHistoryService
             ' CONTOURNEMENT PAGINATION TUYA : L'API retourne max 100 logs par appel
             ' Solution: diviser en tranches de 2h pour toutes les périodes
             ' 24h = 12 tranches, 7j = 84 tranches, 30j = 360 tranches
-            ' ✅ CORRECTION: Taille en SECONDES (pas millisecondes!) car timestamps sont en secondes
-            Dim sliceSizeSeconds As Long = 2 * 60 * 60  ' 2 heures en secondes
+            ' ✅ CORRECTION: Taille en MILLISECONDES car timestamps sont en millisecondes
+            Dim sliceSizeMs As Long = CLng(2 * 60 * 60 * 1000)  ' 2 heures en millisecondes
 
             Dim currentStart As Long = startTimestamp
             Dim sliceCount As Integer = 0
 
             While currentStart < endTimestamp
                 sliceCount += 1
-                Dim currentEnd As Long = Math.Min(currentStart + sliceSizeSeconds, endTimestamp)
+                Dim currentEnd As Long = Math.Min(currentStart + sliceSizeMs, endTimestamp)
 
                 ' Appeler l'API pour cette tranche spécifique (sans pagination)
                 Dim sliceLogs = Await GetDeviceLogsV1Async(deviceId, currentStart, currentEnd)
@@ -462,10 +463,12 @@ Public Class TuyaHistoryService
             Dim endpoint = $"/v1.0/devices/{deviceId}/logs"
             Dim allLogs As New List(Of DeviceLog)
 
-            ' types=report : Changements d'état et valeurs (CORRECTIONS_HISTORIQUE.md ligne 39)
-            ' size=100 : L'API limite à 100 de toute façon
-            ' Source: CORRECTIONS_HISTORIQUE.md lignes 30-40
-            Dim queryParams = $"?start_time={startTimestamp}&end_time={endTimestamp}&types=report&size=100"
+            ' Paramètres selon documentation officielle Tuya Device Management API :
+            ' - type=7 : Tous les types de logs
+            ' - size=100 : L'API limite à 100 de toute façon
+            ' - query_type=2 : Type de requête (optionnel)
+            ' Source: https://developer.tuya.com/en/docs/cloud/device-management?id=K9g6rfntdz78a
+            Dim queryParams = $"?type=7&start_time={startTimestamp}&end_time={endTimestamp}&size=100"
 
             Dim response = Await _apiClient.GetAsync(endpoint & queryParams)
 
