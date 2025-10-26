@@ -424,8 +424,9 @@ Public Class HistoryForm
     End Sub
 
     ''' <summary>
-    ''' Affiche un graphique en barres pour les événements discrets
+    ''' Affiche un graphique temporel pour les événements discrets
     ''' (PIR, détection de fumée, alarme, tamper, etc.)
+    ''' Chaque événement est représenté par un marqueur vertical sur la timeline
     ''' </summary>
     Private Sub DrawDiscreteEventsChart(stats As DeviceStatistics)
         _statsChart.Plot.Clear()
@@ -436,37 +437,59 @@ Public Class HistoryForm
             Return
         End If
 
-        ' Extraire données
-        Dim values = stats.DataPoints.Select(Function(p) p.Value).ToArray()
-        Dim labels = stats.DataPoints.Select(Function(p) If(String.IsNullOrEmpty(p.Label), "N/A", p.Label)).ToArray()
-        Dim positions = Enumerable.Range(0, values.Length).Select(Function(i) CDbl(i)).ToArray()
-
-        ' Vérification supplémentaire : au moins un point de données
-        If values.Length = 0 OrElse positions.Length = 0 Then
-            DrawNoDataMessage("Aucun événement détecté" & vbCrLf & "pour cette période")
-            Return
-        End If
-
         Try
-            ' Créer graphique en barres
-            Dim bar = _statsChart.Plot.Add.Bars(positions, values)
-            bar.Color = ScottPlot.Color.FromHex("#FF9500") ' Orange pour attirer l'attention sur les événements
+            ' Extraire les timestamps des événements
+            Dim timestamps = stats.DataPoints.Select(Function(p) p.Timestamp.ToOADate()).ToArray()
+            Dim eventCount = timestamps.Length
 
-            ' Configuration des axes
-            _statsChart.Plot.Axes.Bottom.TickGenerator = New ScottPlot.TickGenerators.NumericManual(
-                positions, labels
-            )
+            ' Vérification supplémentaire
+            If timestamps.Length = 0 Then
+                DrawNoDataMessage("Aucun événement détecté" & vbCrLf & "pour cette période")
+                Return
+            End If
 
-            _statsChart.Plot.Axes.Bottom.MajorTickStyle.Length = 0
-            _statsChart.Plot.Axes.Left.Label.Text = "Nombre d'événements"
+            ' Créer un tableau de valeurs à 1 pour chaque événement (pour visualisation)
+            Dim yValues = Enumerable.Repeat(1.0, eventCount).ToArray()
+
+            ' Option 1: Afficher les événements comme des marqueurs verticaux (lollipop/spike)
+            For i As Integer = 0 To timestamps.Length - 1
+                ' Créer une ligne verticale du bas (0) vers le haut (1) pour chaque événement
+                Dim xCoords As Double() = {timestamps(i), timestamps(i)}
+                Dim yCoords As Double() = {0.0, 1.0}
+
+                Dim line = _statsChart.Plot.Add.Scatter(xCoords, yCoords)
+                line.Color = ScottPlot.Color.FromHex("#FF9500") ' Orange pour attirer l'attention
+                line.LineWidth = 3
+                line.MarkerSize = 0
+            Next
+
+            ' Ajouter des marqueurs en haut de chaque ligne pour mieux les voir
+            Dim markers = _statsChart.Plot.Add.Scatter(timestamps, yValues)
+            markers.Color = ScottPlot.Color.FromHex("#FF3B30") ' Rouge vif
+            markers.MarkerSize = 10
+            markers.MarkerShape = ScottPlot.MarkerShape.FilledCircle
+            markers.LineWidth = 0 ' Pas de ligne entre les marqueurs
+
+            ' Configuration de l'axe X (temps)
+            _statsChart.Plot.Axes.DateTimeTicksBottom()
+
+            ' Configuration de l'axe Y (0 à 1.2 pour laisser de l'espace)
+            _statsChart.Plot.Axes.Left.Min = 0
+            _statsChart.Plot.Axes.Left.Max = 1.2
+            _statsChart.Plot.Axes.Left.Label.Text = "Événements détectés"
             _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
             _statsChart.Plot.Axes.Left.Label.FontSize = 12
             _statsChart.Plot.Axes.Left.Label.Bold = True
 
+            ' Masquer les ticks de l'axe Y (pas pertinents pour ce type de visualisation)
+            Dim tickPositions As Double() = {}
+            Dim tickLabels As String() = {}
+            _statsChart.Plot.Axes.Left.TickGenerator = New ScottPlot.TickGenerators.NumericManual(tickPositions, tickLabels)
+
             ' Titre avec informations supplémentaires
             Dim title = GetChartTitle(stats.Code)
             If stats.TotalEvents > 0 Then
-                title &= $" ({stats.TotalEvents} total)"
+                title &= $" ({stats.TotalEvents} événement(s))"
                 If Not String.IsNullOrEmpty(stats.PeakActivityHour) Then
                     title &= $" - Pic: {stats.PeakActivityHour}"
                 End If
@@ -475,6 +498,8 @@ Public Class HistoryForm
 
             ' Style
             _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
+            _statsChart.Plot.Grid.XAxisStyle.IsVisible = True
+            _statsChart.Plot.Grid.YAxisStyle.IsVisible = False ' Pas de grille Y pour ce type de graphique
             _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
             _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
 
