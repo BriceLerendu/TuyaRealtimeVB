@@ -771,15 +771,43 @@ Public Class TuyaApiClient
 
     Private Function CalculateSignature(httpMethod As String, bodyHash As String, path As String,
                                        token As String, timestamp As Long, nonce As String) As String
+        ' ✅ CORRECTION CRITIQUE : Trier les query params selon la doc Tuya
+        ' Source: https://developer.tuya.com/en/docs/iot/singnature?id=Ka43a5mtx1gsc
+        ' Les query params doivent être triés par ordre alphabétique pour la signature
+        Dim sortedPath = SortQueryParameters(path)
+
         ' Construire stringToSign selon le protocole Tuya :
         ' METHOD + "\n" + ContentSHA256 + "\n" + Headers + "\n" + URL
-        Dim stringToSign = httpMethod & vbLf & bodyHash & vbLf & "" & vbLf & path
+        Dim stringToSign = httpMethod & vbLf & bodyHash & vbLf & "" & vbLf & sortedPath
 
         ' Construire la chaîne finale à signer :
         ' client_id + access_token + timestamp + nonce + stringToSign
         Dim toSign = _cfg.AccessId & token & timestamp.ToString() & nonce & stringToSign
 
         Return TuyaTokenProvider.HmacSha256Upper(toSign, _cfg.AccessSecret)
+    End Function
+
+    ''' <summary>
+    ''' Trie les query parameters par ordre alphabétique selon la spec Tuya
+    ''' </summary>
+    Private Function SortQueryParameters(pathAndQuery As String) As String
+        ' Séparer le path des query params
+        Dim questionMarkIndex = pathAndQuery.IndexOf("?"c)
+        If questionMarkIndex = -1 Then
+            ' Pas de query params
+            Return pathAndQuery
+        End If
+
+        Dim path = pathAndQuery.Substring(0, questionMarkIndex)
+        Dim queryString = pathAndQuery.Substring(questionMarkIndex + 1)
+
+        ' Parser et trier les paramètres par ordre alphabétique
+        Dim params = queryString.Split("&"c) _
+            .OrderBy(Function(p) p) _
+            .ToArray()
+
+        ' Reconstruire le path avec les params triés
+        Return path & "?" & String.Join("&", params)
     End Function
 
     Private Function GetTimestamp() As Long
