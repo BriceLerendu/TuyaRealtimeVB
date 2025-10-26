@@ -396,25 +396,15 @@ Public Class TuyaHistoryService
         Try
             Dim allLogs As New List(Of DeviceLog)
 
-            ' Calculer la durée totale en heures
-            Dim totalMs As Long = endTimestamp - startTimestamp
-            Dim totalHours As Integer = CInt(totalMs / (60 * 60 * 1000))
-
-            ' Adapter la taille des tranches selon la période
-            ' 24h : tranches de 2h (12 tranches)
-            ' 7 jours : tranches de 12h (14 tranches)
-            Dim sliceSizeMs As Long
-            If totalHours <= 24 Then
-                sliceSizeMs = 2 * 60 * 60 * 1000  ' 2 heures
-            Else
-                sliceSizeMs = 12 * 60 * 60 * 1000  ' 12 heures
-            End If
+            ' CONTOURNEMENT PAGINATION TUYA : L'API retourne max 100 logs par appel
+            ' Solution: diviser en tranches de 2h pour toutes les périodes
+            ' 24h = 12 tranches, 7j = 84 tranches, 30j = 360 tranches
+            Dim sliceSizeMs As Long = 2 * 60 * 60 * 1000  ' 2 heures pour toutes les périodes
 
             Dim currentStart As Long = startTimestamp
             Dim sliceCount As Integer = 0
-            Dim maxSlices As Integer = 20  ' Limite à 20 tranches maximum
 
-            While currentStart < endTimestamp AndAlso sliceCount < maxSlices
+            While currentStart < endTimestamp
                 sliceCount += 1
                 Dim currentEnd As Long = Math.Min(currentStart + sliceSizeMs, endTimestamp)
 
