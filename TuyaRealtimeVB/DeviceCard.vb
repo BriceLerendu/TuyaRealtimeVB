@@ -228,9 +228,9 @@ Public Class DeviceCard
     Private Function CreateHistoryButton() As Button
         Dim button = New Button With {
             .Text = "📊",
-            .Location = New Point(CARD_WIDTH - 40, 15),
-            .Size = New Size(32, 32),
-            .Font = New Font("Segoe UI Emoji", 11),
+            .Location = New Point(CARD_WIDTH - 36, 18),
+            .Size = New Size(26, 26),
+            .Font = New Font("Segoe UI Emoji", 9),
             .BackColor = Color.FromArgb(0, 122, 255),
             .ForeColor = Color.White,
             .FlatStyle = FlatStyle.Flat,
