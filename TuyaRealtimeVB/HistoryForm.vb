@@ -506,6 +506,7 @@ Public Class HistoryForm
     ''' Affiche une timeline visuelle pour les événements discrets
     ''' (PIR, détection de fumée, alarme, tamper, etc.)
     ''' Affiche des marqueurs temporels pour chaque événement
+    ''' ✅ CHANGEMENT: Affiche TOUJOURS une timeline (jamais d'histogramme)
     ''' </summary>
     Private Sub DrawDiscreteEventsChart(stats As DeviceStatistics)
         _statsChart.Plot.Clear()
@@ -517,7 +518,7 @@ Public Class HistoryForm
         End If
 
         Try
-            ' Extraire les événements
+            ' Extraire les événements et TRIER PAR ORDRE CHRONOLOGIQUE
             Dim events = stats.DataPoints.OrderBy(Function(p) p.Timestamp).ToList()
             Dim eventCount = events.Count
 
@@ -527,20 +528,8 @@ Public Class HistoryForm
                 Return
             End If
 
-            ' Déterminer la période couverte
-            Dim startTime = events.First().Timestamp
-            Dim endTime = events.Last().Timestamp
-            Dim duration = endTime - startTime
-
-            ' Si événements très rapprochés (< 1h), afficher une timeline avec marqueurs
-            ' Sinon afficher un histogramme groupé
-            If eventCount <= 50 AndAlso duration.TotalHours <= 6 Then
-                ' MODE TIMELINE : Afficher chaque événement individuellement
-                DrawTimelineWithMarkers(events, stats.Code)
-            Else
-                ' MODE HISTOGRAMME : Grouper les événements
-                DrawHistogramGrouped(events, duration, stats)
-            End If
+            ' ✅ MODE TIMELINE UNIQUEMENT : Afficher chaque événement sur une timeline
+            DrawTimelineWithMarkers(events, stats.Code)
 
         Catch ex As Exception
             ' En cas d'erreur lors de la création du graphique, afficher un message
@@ -553,13 +542,18 @@ Public Class HistoryForm
     ''' <summary>
     ''' Affiche une timeline avec des marqueurs pour chaque événement individuel
     ''' ✅ CHANGEMENT: Affiche des couleurs différentes selon le type d'événement
+    ''' ✅ CORRECTION: Les événements sont déjà triés chronologiquement en entrée
     ''' </summary>
     Private Sub DrawTimelineWithMarkers(events As List(Of StatisticPoint), code As String)
+        ' Vérifier que les événements sont bien triés chronologiquement (ordre croissant)
+        ' Note: La liste est déjà triée par DrawDiscreteEventsChart, mais on re-vérifie
+        Dim sortedEvents = events.OrderBy(Function(e) e.Timestamp).ToList()
+
         ' Séparer les événements en deux groupes selon leur type
         Dim alertEvents As New List(Of StatisticPoint)
         Dim normalEvents As New List(Of StatisticPoint)
 
-        For Each evt In events
+        For Each evt In sortedEvents
             Dim originalValue = evt.OriginalValue?.ToLower()
             Dim isAlert = originalValue = "pir" OrElse originalValue = "motion" OrElse
                          originalValue = "open" OrElse originalValue = "true" OrElse
@@ -634,10 +628,10 @@ Public Class HistoryForm
         ' Pas de ticks sur l'axe Y
         _statsChart.Plot.Axes.Left.TickGenerator = New ScottPlot.TickGenerators.NumericManual(New Double() {}, New String() {})
 
-        ' Calculer l'intervalle moyen entre événements
+        ' Calculer l'intervalle moyen entre événements (utiliser les événements triés)
         Dim intervals As New List(Of TimeSpan)
-        For i As Integer = 1 To events.Count - 1
-            intervals.Add(events(i).Timestamp - events(i - 1).Timestamp)
+        For i As Integer = 1 To sortedEvents.Count - 1
+            intervals.Add(sortedEvents(i).Timestamp - sortedEvents(i - 1).Timestamp)
         Next
 
         Dim avgInterval = If(intervals.Count > 0,
@@ -881,7 +875,10 @@ Public Class HistoryForm
             Return
         End If
 
-        For Each log In logs
+        ' ✅ CORRECTION: Trier les logs par ordre chronologique (du plus récent au plus ancien pour la liste)
+        Dim sortedLogs = logs.OrderByDescending(Function(l) l.EventTime).ToList()
+
+        For Each log In sortedLogs
             Dim item As New ListViewItem(log.EventTime.ToString("dd/MM/yyyy HH:mm:ss"))
             item.SubItems.Add(log.Description)
 
