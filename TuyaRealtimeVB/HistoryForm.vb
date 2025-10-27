@@ -652,10 +652,6 @@ Public Class HistoryForm
         End If
         _statsChart.Plot.Title(title)
 
-        ' Ajouter une légende pour expliquer les couleurs
-        _statsChart.Plot.Legend.IsVisible = True
-        _statsChart.Plot.Legend.Location = ScottPlot.Alignment.UpperRight
-
         ' Style
         _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
         _statsChart.Plot.Grid.XAxisStyle.IsVisible = True
@@ -882,17 +878,25 @@ Public Class HistoryForm
             Dim item As New ListViewItem(log.EventTime.ToString("dd/MM/yyyy HH:mm:ss"))
             item.SubItems.Add(log.Description)
 
-            ' Couleur selon type
-            Select Case log.EventType
-                Case "switch_on"
-                    item.ForeColor = Color.Green
-                Case "switch_off"
-                    item.ForeColor = Color.Red
-                Case "online"
-                    item.ForeColor = Color.Blue
-                Case "offline"
-                    item.ForeColor = Color.DarkRed
-            End Select
+            ' Couleur selon la valeur (concordance avec les couleurs du graphique)
+            Dim valueLower = log.Value?.ToLower()
+
+            ' Déterminer si c'est un événement d'alerte ou un état normal
+            If valueLower = "pir" OrElse valueLower = "motion" OrElse
+               valueLower = "open" OrElse valueLower = "true" OrElse
+               valueLower = "1" OrElse valueLower = "on" OrElse
+               valueLower = "detected" Then
+                ' État d'alerte/détection : ROUGE (#FF3B30)
+                item.ForeColor = Color.FromArgb(255, 59, 48)
+            ElseIf valueLower = "none" OrElse valueLower = "close" OrElse
+                   valueLower = "false" OrElse valueLower = "0" OrElse
+                   valueLower = "off" Then
+                ' État normal : VERT (#34C759)
+                item.ForeColor = Color.FromArgb(52, 199, 89)
+            Else
+                ' Autre : couleur par défaut (noir)
+                item.ForeColor = Color.FromArgb(28, 28, 30)
+            End If
 
             _logsListView.Items.Add(item)
         Next
