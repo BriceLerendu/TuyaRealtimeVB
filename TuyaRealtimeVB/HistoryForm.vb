@@ -409,11 +409,19 @@ Public Class HistoryForm
                 ' ✅ CHANGEMENT: Couleur selon la VALEUR RÉELLE de l'événement
                 ' Rouge pour alertes/détections (pir, open, true, 1, on)
                 ' Vert pour états normaux (none, close, false, 0, off)
+                ' Orange pour mode chaud (hot)
+                ' Bleu pour mode froid (cool)
                 Dim originalValue = currentPoint.OriginalValue?.ToLower()
                 Dim stateColor As ScottPlot.Color
 
-                ' Déterminer si c'est un événement d'alerte ou un état normal
-                If originalValue = "pir" OrElse originalValue = "motion" OrElse
+                ' Déterminer la couleur selon le type d'événement
+                If originalValue = "hot" Then
+                    ' Mode chauffage : ORANGE
+                    stateColor = ScottPlot.Color.FromHex("#FF9500")
+                ElseIf originalValue = "cool" OrElse originalValue = "cold" Then
+                    ' Mode refroidissement : BLEU
+                    stateColor = ScottPlot.Color.FromHex("#007AFF")
+                ElseIf originalValue = "pir" OrElse originalValue = "motion" OrElse
                    originalValue = "open" OrElse originalValue = "true" OrElse
                    originalValue = "1" OrElse originalValue = "on" OrElse
                    originalValue = "detected" Then
@@ -448,41 +456,68 @@ Public Class HistoryForm
             _statsChart.Plot.Axes.Left.Label.FontSize = 12
             _statsChart.Plot.Axes.Left.Label.Bold = True
 
-            ' Ticks personnalisés pour l'axe Y
+            ' Ticks personnalisés pour l'axe Y (adapter selon le type d'événements)
+            Dim hasHotOrCool = sortedPoints.Any(Function(p) p.OriginalValue?.ToLower() = "hot" OrElse
+                                                              p.OriginalValue?.ToLower() = "cool" OrElse
+                                                              p.OriginalValue?.ToLower() = "cold")
             Dim tickPositions As Double() = {0.25, 0.75}
-            Dim tickLabels As String() = {"NORMAL", "ALERTE"}
+            Dim tickLabels As String()
+            If hasHotOrCool Then
+                tickLabels = New String() {"COOL/NORMAL", "HOT/ALERTE"}
+            Else
+                tickLabels = New String() {"NORMAL", "ALERTE"}
+            End If
             _statsChart.Plot.Axes.Left.TickGenerator = New ScottPlot.TickGenerators.NumericManual(tickPositions, tickLabels)
 
-            ' Calculer les statistiques d'état (temps en alerte)
+            ' Calculer les statistiques d'état (temps en alerte/hot/cool)
             Dim totalDuration = endTime - startTime
             Dim alertDuration As TimeSpan = TimeSpan.Zero
+            Dim hotDuration As TimeSpan = TimeSpan.Zero
+            Dim coolDuration As TimeSpan = TimeSpan.Zero
 
             For i As Integer = 0 To sortedPoints.Count - 1
                 Dim currentPoint = sortedPoints(i)
-                ' Vérifier si c'est un état d'alerte en utilisant la valeur originale
+                ' Vérifier le type d'état en utilisant la valeur originale
                 Dim originalValue = currentPoint.OriginalValue?.ToLower()
                 Dim isAlert = originalValue = "pir" OrElse originalValue = "motion" OrElse
                              originalValue = "open" OrElse originalValue = "true" OrElse
                              originalValue = "1" OrElse originalValue = "on" OrElse
                              originalValue = "detected"
+                Dim isHot = originalValue = "hot"
+                Dim isCool = originalValue = "cool" OrElse originalValue = "cold"
+
+                Dim nextTime As DateTime
+                If i < sortedPoints.Count - 1 Then
+                    nextTime = sortedPoints(i + 1).Timestamp
+                Else
+                    nextTime = If(endTime > DateTime.Now, endTime, DateTime.Now)
+                End If
 
                 If isAlert Then
-                    Dim nextTime As DateTime
-                    If i < sortedPoints.Count - 1 Then
-                        nextTime = sortedPoints(i + 1).Timestamp
-                    Else
-                        nextTime = If(endTime > DateTime.Now, endTime, DateTime.Now)
-                    End If
                     alertDuration += nextTime - currentPoint.Timestamp
+                ElseIf isHot Then
+                    hotDuration += nextTime - currentPoint.Timestamp
+                ElseIf isCool Then
+                    coolDuration += nextTime - currentPoint.Timestamp
                 End If
             Next
 
             Dim alertPercent = If(totalDuration.TotalSeconds > 0,
                 (alertDuration.TotalSeconds / totalDuration.TotalSeconds) * 100, 0)
+            Dim hotPercent = If(totalDuration.TotalSeconds > 0,
+                (hotDuration.TotalSeconds / totalDuration.TotalSeconds) * 100, 0)
+            Dim coolPercent = If(totalDuration.TotalSeconds > 0,
+                (coolDuration.TotalSeconds / totalDuration.TotalSeconds) * 100, 0)
 
             ' Titre adapté avec statistiques
             Dim title = GetChartTitle(stats.Code)
-            title &= $" - Alerte: {alertPercent:F1}% ({sortedPoints.Count} changements d'état)"
+            If hotPercent > 0 OrElse coolPercent > 0 Then
+                ' Pour les modes de chauffage
+                title &= $" - Hot: {hotPercent:F1}% | Cool: {coolPercent:F1}% ({sortedPoints.Count} changements)"
+            Else
+                ' Pour les alertes classiques
+                title &= $" - Alerte: {alertPercent:F1}% ({sortedPoints.Count} changements d'état)"
+            End If
             _statsChart.Plot.Title(title)
 
             ' Style
@@ -549,9 +584,11 @@ Public Class HistoryForm
         ' Note: La liste est déjà triée par DrawDiscreteEventsChart, mais on re-vérifie
         Dim sortedEvents = events.OrderBy(Function(e) e.Timestamp).ToList()
 
-        ' Séparer les événements en deux groupes selon leur type
+        ' Séparer les événements en groupes selon leur type
         Dim alertEvents As New List(Of StatisticPoint)
         Dim normalEvents As New List(Of StatisticPoint)
+        Dim hotEvents As New List(Of StatisticPoint)
+        Dim coolEvents As New List(Of StatisticPoint)
 
         For Each evt In sortedEvents
             Dim originalValue = evt.OriginalValue?.ToLower()
@@ -559,8 +596,14 @@ Public Class HistoryForm
                          originalValue = "open" OrElse originalValue = "true" OrElse
                          originalValue = "1" OrElse originalValue = "on" OrElse
                          originalValue = "detected"
+            Dim isHot = originalValue = "hot"
+            Dim isCool = originalValue = "cool" OrElse originalValue = "cold"
 
-            If isAlert Then
+            If isHot Then
+                hotEvents.Add(evt)
+            ElseIf isCool Then
+                coolEvents.Add(evt)
+            ElseIf isAlert Then
                 alertEvents.Add(evt)
             Else
                 normalEvents.Add(evt)
@@ -609,6 +652,48 @@ Public Class HistoryForm
             Next
         End If
 
+        ' Ajouter les marqueurs pour les événements HOT (ORANGE)
+        If hotEvents.Count > 0 Then
+            Dim hotTimestamps = hotEvents.Select(Function(e) e.Timestamp.ToOADate()).ToArray()
+            Dim hotYValues = hotEvents.Select(Function(e) 0.75).ToArray() ' Position haute
+
+            Dim hotScatter = _statsChart.Plot.Add.Scatter(hotTimestamps, hotYValues)
+            hotScatter.Color = ScottPlot.Color.FromHex("#FF9500") ' Orange pour hot
+            hotScatter.MarkerSize = 14
+            hotScatter.MarkerShape = ScottPlot.MarkerShape.FilledSquare
+            hotScatter.LineWidth = 0
+            hotScatter.Label = "Mode Hot"
+
+            ' Lignes verticales pour hot
+            For Each evt In hotEvents
+                Dim vLine = _statsChart.Plot.Add.VerticalLine(evt.Timestamp.ToOADate())
+                vLine.Color = ScottPlot.Color.FromHex("#FF9500").WithAlpha(0.3)
+                vLine.LineWidth = 2
+                vLine.LinePattern = ScottPlot.LinePattern.Solid
+            Next
+        End If
+
+        ' Ajouter les marqueurs pour les événements COOL (BLEU)
+        If coolEvents.Count > 0 Then
+            Dim coolTimestamps = coolEvents.Select(Function(e) e.Timestamp.ToOADate()).ToArray()
+            Dim coolYValues = coolEvents.Select(Function(e) 0.25).ToArray() ' Position basse
+
+            Dim coolScatter = _statsChart.Plot.Add.Scatter(coolTimestamps, coolYValues)
+            coolScatter.Color = ScottPlot.Color.FromHex("#007AFF") ' Bleu pour cool
+            coolScatter.MarkerSize = 14
+            coolScatter.MarkerShape = ScottPlot.MarkerShape.FilledSquare
+            coolScatter.LineWidth = 0
+            coolScatter.Label = "Mode Cool"
+
+            ' Lignes verticales pour cool
+            For Each evt In coolEvents
+                Dim vLine = _statsChart.Plot.Add.VerticalLine(evt.Timestamp.ToOADate())
+                vLine.Color = ScottPlot.Color.FromHex("#007AFF").WithAlpha(0.3)
+                vLine.LineWidth = 2
+                vLine.LinePattern = ScottPlot.LinePattern.Solid
+            Next
+        End If
+
         ' Ajouter une ligne horizontale de base
         Dim baseLine = _statsChart.Plot.Add.HorizontalLine(0.5)
         baseLine.Color = ScottPlot.Color.FromHex("#8E8E93")
@@ -638,9 +723,19 @@ Public Class HistoryForm
             TimeSpan.FromSeconds(intervals.Average(Function(t) t.TotalSeconds)),
             TimeSpan.Zero)
 
-        ' Titre avec statistiques incluant le nombre d'alertes vs normaux
+        ' Titre avec statistiques incluant le nombre de chaque type d'événement
         Dim title = GetChartTitle(code)
-        title &= $" - {alertEvents.Count} alerte(s), {normalEvents.Count} normal"
+        If hotEvents.Count > 0 OrElse coolEvents.Count > 0 Then
+            ' Afficher les stats des modes de chauffage
+            title &= $" - Hot: {hotEvents.Count}, Cool: {coolEvents.Count}"
+            If normalEvents.Count > 0 Then
+                title &= $", Autre: {normalEvents.Count}"
+            End If
+        Else
+            ' Afficher les stats d'alertes classiques
+            title &= $" - {alertEvents.Count} alerte(s), {normalEvents.Count} normal"
+        End If
+
         If avgInterval.TotalSeconds > 0 Then
             If avgInterval.TotalMinutes < 1 Then
                 title &= $" (intervalle moyen: {avgInterval.TotalSeconds:F0}s)"
@@ -881,8 +976,14 @@ Public Class HistoryForm
             ' Couleur selon la valeur (concordance avec les couleurs du graphique)
             Dim valueLower = log.Value?.ToLower()
 
-            ' Déterminer si c'est un événement d'alerte ou un état normal
-            If valueLower = "pir" OrElse valueLower = "motion" OrElse
+            ' Déterminer la couleur selon le type d'événement
+            If valueLower = "hot" Then
+                ' Mode chauffage : ORANGE (#FF9500)
+                item.ForeColor = Color.FromArgb(255, 149, 0)
+            ElseIf valueLower = "cool" OrElse valueLower = "cold" Then
+                ' Mode refroidissement : BLEU (#007AFF)
+                item.ForeColor = Color.FromArgb(0, 122, 255)
+            ElseIf valueLower = "pir" OrElse valueLower = "motion" OrElse
                valueLower = "open" OrElse valueLower = "true" OrElse
                valueLower = "1" OrElse valueLower = "on" OrElse
                valueLower = "detected" Then
