@@ -823,6 +823,7 @@ Public Class TuyaHistoryService
         Log($"  🔍 Détection type visualisation pour code: '{code}'")
 
         ' 1. D'abord, vérifier si les valeurs sont uniquement binaires (0/1, true/false)
+        ' ou des modes discrets (hot/cool/eco/etc.)
         ' Cette vérification est prioritaire pour gérer correctement les PIR et autres capteurs
         ' qui peuvent renvoyer des états binaires plutôt que des événements ponctuels
         If logs IsNot Nothing AndAlso logs.Count > 0 Then
@@ -839,6 +840,16 @@ Public Class TuyaHistoryService
                                               v = "open" OrElse v = "close") Then
                     Log($"  ✅ Type détecté: BinaryState (valeurs binaires détectées)")
                     Return SensorVisualizationType.BinaryState
+                End If
+
+                ' ✅ NOUVEAU: Si c'est un code "mode" avec des valeurs discrètes (hot, cool, eco, etc.)
+                ' → Timeline avec états pour visualiser les changements de mode
+                If codeLower.Contains("mode") Then
+                    Dim modeValues = New String() {"hot", "cool", "cold", "eco", "auto", "manual", "comfort", "holiday", "program", "away"}
+                    If uniqueValues.Any(Function(v) modeValues.Contains(v)) Then
+                        Log($"  ✅ Type détecté: BinaryState (mode de chauffage détecté)")
+                        Return SensorVisualizationType.BinaryState
+                    End If
                 End If
             End If
         End If
