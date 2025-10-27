@@ -406,10 +406,23 @@ Public Class HistoryForm
                 Dim y1 = 0.0
                 Dim y2 = 1.0
 
-                ' Couleur selon l'état
-                Dim stateColor = If(currentPoint.Value > 0.5,
-                    ScottPlot.Color.FromHex("#34C759"), ' Vert pour actif
-                    ScottPlot.Color.FromHex("#8E8E93")) ' Gris pour inactif
+                ' ✅ CHANGEMENT: Couleur selon la VALEUR RÉELLE de l'événement
+                ' Rouge pour alertes/détections (pir, open, true, 1, on)
+                ' Vert pour états normaux (none, close, false, 0, off)
+                Dim originalValue = currentPoint.OriginalValue?.ToLower()
+                Dim stateColor As ScottPlot.Color
+
+                ' Déterminer si c'est un événement d'alerte ou un état normal
+                If originalValue = "pir" OrElse originalValue = "motion" OrElse
+                   originalValue = "open" OrElse originalValue = "true" OrElse
+                   originalValue = "1" OrElse originalValue = "on" OrElse
+                   originalValue = "detected" Then
+                    ' État d'alerte/détection : ROUGE
+                    stateColor = ScottPlot.Color.FromHex("#FF3B30")
+                Else
+                    ' État normal : VERT
+                    stateColor = ScottPlot.Color.FromHex("#34C759")
+                End If
 
                 ' Ajouter le rectangle
                 Dim rect = _statsChart.Plot.Add.Rectangle(x1, x2, y1, y2)
@@ -437,32 +450,39 @@ Public Class HistoryForm
 
             ' Ticks personnalisés pour l'axe Y
             Dim tickPositions As Double() = {0.25, 0.75}
-            Dim tickLabels As String() = {"INACTIF", "ACTIF"}
+            Dim tickLabels As String() = {"NORMAL", "ALERTE"}
             _statsChart.Plot.Axes.Left.TickGenerator = New ScottPlot.TickGenerators.NumericManual(tickPositions, tickLabels)
 
-            ' Calculer les statistiques d'état
+            ' Calculer les statistiques d'état (temps en alerte)
             Dim totalDuration = endTime - startTime
-            Dim activeDuration As TimeSpan = TimeSpan.Zero
+            Dim alertDuration As TimeSpan = TimeSpan.Zero
 
             For i As Integer = 0 To sortedPoints.Count - 1
                 Dim currentPoint = sortedPoints(i)
-                If currentPoint.Value > 0.5 Then
+                ' Vérifier si c'est un état d'alerte en utilisant la valeur originale
+                Dim originalValue = currentPoint.OriginalValue?.ToLower()
+                Dim isAlert = originalValue = "pir" OrElse originalValue = "motion" OrElse
+                             originalValue = "open" OrElse originalValue = "true" OrElse
+                             originalValue = "1" OrElse originalValue = "on" OrElse
+                             originalValue = "detected"
+
+                If isAlert Then
                     Dim nextTime As DateTime
                     If i < sortedPoints.Count - 1 Then
                         nextTime = sortedPoints(i + 1).Timestamp
                     Else
                         nextTime = If(endTime > DateTime.Now, endTime, DateTime.Now)
                     End If
-                    activeDuration += nextTime - currentPoint.Timestamp
+                    alertDuration += nextTime - currentPoint.Timestamp
                 End If
             Next
 
-            Dim activePercent = If(totalDuration.TotalSeconds > 0,
-                (activeDuration.TotalSeconds / totalDuration.TotalSeconds) * 100, 0)
+            Dim alertPercent = If(totalDuration.TotalSeconds > 0,
+                (alertDuration.TotalSeconds / totalDuration.TotalSeconds) * 100, 0)
 
             ' Titre adapté avec statistiques
             Dim title = GetChartTitle(stats.Code)
-            title &= $" - Actif: {activePercent:F1}% ({sortedPoints.Count} changements d'état)"
+            title &= $" - Alerte: {alertPercent:F1}% ({sortedPoints.Count} changements d'état)"
             _statsChart.Plot.Title(title)
 
             ' Style
@@ -532,26 +552,68 @@ Public Class HistoryForm
 
     ''' <summary>
     ''' Affiche une timeline avec des marqueurs pour chaque événement individuel
+    ''' ✅ CHANGEMENT: Affiche des couleurs différentes selon le type d'événement
     ''' </summary>
     Private Sub DrawTimelineWithMarkers(events As List(Of StatisticPoint), code As String)
-        ' Créer une timeline horizontale avec des marqueurs verticaux
-        Dim timestamps = events.Select(Function(e) e.Timestamp.ToOADate()).ToArray()
-        Dim yValues = events.Select(Function(e) 0.5).ToArray() ' Tous au milieu
+        ' Séparer les événements en deux groupes selon leur type
+        Dim alertEvents As New List(Of StatisticPoint)
+        Dim normalEvents As New List(Of StatisticPoint)
 
-        ' Ajouter des marqueurs pour chaque événement
-        Dim scatter = _statsChart.Plot.Add.Scatter(timestamps, yValues)
-        scatter.Color = ScottPlot.Color.FromHex("#FF3B30") ' Rouge vif pour les événements
-        scatter.MarkerSize = 12
-        scatter.MarkerShape = ScottPlot.MarkerShape.FilledDiamond
-        scatter.LineWidth = 0 ' Pas de ligne entre les points
-
-        ' Ajouter des lignes verticales pour chaque événement
         For Each evt In events
-            Dim vLine = _statsChart.Plot.Add.VerticalLine(evt.Timestamp.ToOADate())
-            vLine.Color = ScottPlot.Color.FromHex("#FF3B30").WithAlpha(0.3)
-            vLine.LineWidth = 2
-            vLine.LinePattern = ScottPlot.LinePattern.Solid
+            Dim originalValue = evt.OriginalValue?.ToLower()
+            Dim isAlert = originalValue = "pir" OrElse originalValue = "motion" OrElse
+                         originalValue = "open" OrElse originalValue = "true" OrElse
+                         originalValue = "1" OrElse originalValue = "on" OrElse
+                         originalValue = "detected"
+
+            If isAlert Then
+                alertEvents.Add(evt)
+            Else
+                normalEvents.Add(evt)
+            End If
         Next
+
+        ' Ajouter les marqueurs pour les événements d'alerte (ROUGE)
+        If alertEvents.Count > 0 Then
+            Dim alertTimestamps = alertEvents.Select(Function(e) e.Timestamp.ToOADate()).ToArray()
+            Dim alertYValues = alertEvents.Select(Function(e) 0.75).ToArray() ' Position haute
+
+            Dim alertScatter = _statsChart.Plot.Add.Scatter(alertTimestamps, alertYValues)
+            alertScatter.Color = ScottPlot.Color.FromHex("#FF3B30") ' Rouge pour alertes
+            alertScatter.MarkerSize = 14
+            alertScatter.MarkerShape = ScottPlot.MarkerShape.FilledDiamond
+            alertScatter.LineWidth = 0
+            alertScatter.Label = "Alertes"
+
+            ' Lignes verticales pour alertes
+            For Each evt In alertEvents
+                Dim vLine = _statsChart.Plot.Add.VerticalLine(evt.Timestamp.ToOADate())
+                vLine.Color = ScottPlot.Color.FromHex("#FF3B30").WithAlpha(0.3)
+                vLine.LineWidth = 2
+                vLine.LinePattern = ScottPlot.LinePattern.Solid
+            Next
+        End If
+
+        ' Ajouter les marqueurs pour les événements normaux (VERT)
+        If normalEvents.Count > 0 Then
+            Dim normalTimestamps = normalEvents.Select(Function(e) e.Timestamp.ToOADate()).ToArray()
+            Dim normalYValues = normalEvents.Select(Function(e) 0.25).ToArray() ' Position basse
+
+            Dim normalScatter = _statsChart.Plot.Add.Scatter(normalTimestamps, normalYValues)
+            normalScatter.Color = ScottPlot.Color.FromHex("#34C759") ' Vert pour normal
+            normalScatter.MarkerSize = 12
+            normalScatter.MarkerShape = ScottPlot.MarkerShape.FilledCircle
+            normalScatter.LineWidth = 0
+            normalScatter.Label = "Normal"
+
+            ' Lignes verticales pour événements normaux
+            For Each evt In normalEvents
+                Dim vLine = _statsChart.Plot.Add.VerticalLine(evt.Timestamp.ToOADate())
+                vLine.Color = ScottPlot.Color.FromHex("#34C759").WithAlpha(0.2)
+                vLine.LineWidth = 1
+                vLine.LinePattern = ScottPlot.LinePattern.Dotted
+            Next
+        End If
 
         ' Ajouter une ligne horizontale de base
         Dim baseLine = _statsChart.Plot.Add.HorizontalLine(0.5)
@@ -582,9 +644,9 @@ Public Class HistoryForm
             TimeSpan.FromSeconds(intervals.Average(Function(t) t.TotalSeconds)),
             TimeSpan.Zero)
 
-        ' Titre avec statistiques
+        ' Titre avec statistiques incluant le nombre d'alertes vs normaux
         Dim title = GetChartTitle(code)
-        title &= $" - {events.Count} événement(s)"
+        title &= $" - {alertEvents.Count} alerte(s), {normalEvents.Count} normal"
         If avgInterval.TotalSeconds > 0 Then
             If avgInterval.TotalMinutes < 1 Then
                 title &= $" (intervalle moyen: {avgInterval.TotalSeconds:F0}s)"
@@ -595,6 +657,10 @@ Public Class HistoryForm
             End If
         End If
         _statsChart.Plot.Title(title)
+
+        ' Ajouter une légende pour expliquer les couleurs
+        _statsChart.Plot.Legend.IsVisible = True
+        _statsChart.Plot.Legend.Location = ScottPlot.Alignment.UpperRight
 
         ' Style
         _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
