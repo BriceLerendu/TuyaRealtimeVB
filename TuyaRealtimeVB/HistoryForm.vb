@@ -355,8 +355,9 @@ Public Class HistoryForm
     End Sub
 
     ''' <summary>
-    ''' Affiche un graphique en escalier pour les états binaires
+    ''' Affiche une timeline visuelle pour les états binaires
     ''' (switch on/off, porte ouverte/fermée, contact, etc.)
+    ''' Affiche des blocs de couleur représentant les périodes actives/inactives
     ''' </summary>
     Private Sub DrawBinaryStateChart(stats As DeviceStatistics)
         _statsChart.Plot.Clear()
@@ -368,50 +369,108 @@ Public Class HistoryForm
         End If
 
         Try
-            ' Extraire données
-            Dim timestamps = stats.DataPoints.Select(Function(p) p.Timestamp.ToOADate()).ToArray()
-            Dim values = stats.DataPoints.Select(Function(p) p.Value).ToArray()
+            ' Trier les points par timestamp
+            Dim sortedPoints = stats.DataPoints.OrderBy(Function(p) p.Timestamp).ToList()
 
             ' Vérification supplémentaire
-            If timestamps.Length = 0 OrElse values.Length = 0 Then
+            If sortedPoints.Count = 0 Then
                 DrawNoDataMessage("Aucune donnée d'état" & vbCrLf & "pour cette période")
                 Return
             End If
 
-            ' Créer graphique en escalier (step plot)
-            Dim scatter = _statsChart.Plot.Add.Scatter(timestamps, values)
-            scatter.Color = ScottPlot.Color.FromHex("#34C759") ' Vert iOS pour état actif
-            scatter.LineWidth = 3
-            scatter.MarkerSize = 0
-            scatter.LinePattern = ScottPlot.LinePattern.Solid
+            ' Déterminer la plage temporelle
+            Dim startTime = sortedPoints.First().Timestamp
+            Dim endTime = sortedPoints.Last().Timestamp
 
-            ' Note: FillY peut ne pas être disponible dans toutes les versions de ScottPlot
-            ' Laissons juste la ligne pour la visualisation
+            ' Si un seul point, étendre la période pour la visualisation
+            If sortedPoints.Count = 1 Then
+                endTime = startTime.AddHours(1)
+            End If
+
+            ' Créer des rectangles pour chaque période d'état
+            For i As Integer = 0 To sortedPoints.Count - 1
+                Dim currentPoint = sortedPoints(i)
+                Dim nextPoint As DateTime
+
+                ' Déterminer la fin de cette période
+                If i < sortedPoints.Count - 1 Then
+                    nextPoint = sortedPoints(i + 1).Timestamp
+                Else
+                    ' Dernier point : étendre jusqu'à maintenant ou +1h
+                    nextPoint = If(endTime > DateTime.Now, endTime, DateTime.Now)
+                End If
+
+                ' Créer un rectangle pour cette période
+                Dim x1 = currentPoint.Timestamp.ToOADate()
+                Dim x2 = nextPoint.ToOADate()
+                Dim y1 = 0.0
+                Dim y2 = 1.0
+
+                ' Couleur selon l'état
+                Dim stateColor = If(currentPoint.Value > 0.5,
+                    ScottPlot.Color.FromHex("#34C759"), ' Vert pour actif
+                    ScottPlot.Color.FromHex("#8E8E93")) ' Gris pour inactif
+
+                ' Ajouter le rectangle
+                Dim rect = _statsChart.Plot.Add.Rectangle(x1, x2, y1, y2)
+                rect.FillColor = stateColor.WithAlpha(0.6)
+                rect.LineColor = stateColor
+                rect.LineWidth = 1
+            Next
+
+            ' Ajouter une ligne de séparation au milieu pour faciliter la lecture
+            Dim midLine = _statsChart.Plot.Add.HorizontalLine(0.5)
+            midLine.Color = ScottPlot.Color.FromHex("#E5E5EA")
+            midLine.LineWidth = 1
+            midLine.LinePattern = ScottPlot.LinePattern.Dotted
 
             ' Configuration de l'axe X (temps)
             _statsChart.Plot.Axes.DateTimeTicksBottom()
 
-            ' Configuration de l'axe Y (0 = inactif, 1 = actif)
-            _statsChart.Plot.Axes.Left.Min = -0.1
-            _statsChart.Plot.Axes.Left.Max = 1.1
-            _statsChart.Plot.Axes.Left.Label.Text = "État"
+            ' Configuration de l'axe Y (timeline)
+            _statsChart.Plot.Axes.Left.Min = 0
+            _statsChart.Plot.Axes.Left.Max = 1
+            _statsChart.Plot.Axes.Left.Label.Text = "Timeline"
             _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
             _statsChart.Plot.Axes.Left.Label.FontSize = 12
             _statsChart.Plot.Axes.Left.Label.Bold = True
 
             ' Ticks personnalisés pour l'axe Y
-            Dim tickPositions As Double() = {0.0, 1.0}
-            Dim tickLabels As String() = {"Inactif", "Actif"}
+            Dim tickPositions As Double() = {0.25, 0.75}
+            Dim tickLabels As String() = {"INACTIF", "ACTIF"}
             _statsChart.Plot.Axes.Left.TickGenerator = New ScottPlot.TickGenerators.NumericManual(tickPositions, tickLabels)
 
-            ' Titre adapté
+            ' Calculer les statistiques d'état
+            Dim totalDuration = endTime - startTime
+            Dim activeDuration As TimeSpan = TimeSpan.Zero
+
+            For i As Integer = 0 To sortedPoints.Count - 1
+                Dim currentPoint = sortedPoints(i)
+                If currentPoint.Value > 0.5 Then
+                    Dim nextTime As DateTime
+                    If i < sortedPoints.Count - 1 Then
+                        nextTime = sortedPoints(i + 1).Timestamp
+                    Else
+                        nextTime = If(endTime > DateTime.Now, endTime, DateTime.Now)
+                    End If
+                    activeDuration += nextTime - currentPoint.Timestamp
+                End If
+            Next
+
+            Dim activePercent = If(totalDuration.TotalSeconds > 0,
+                (activeDuration.TotalSeconds / totalDuration.TotalSeconds) * 100, 0)
+
+            ' Titre adapté avec statistiques
             Dim title = GetChartTitle(stats.Code)
+            title &= $" - Actif: {activePercent:F1}% ({sortedPoints.Count} changements d'état)"
             _statsChart.Plot.Title(title)
 
             ' Style
             _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
+            _statsChart.Plot.Grid.XAxisStyle.IsVisible = True
+            _statsChart.Plot.Grid.YAxisStyle.IsVisible = False ' Masquer la grille Y pour timeline
             _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
-            _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+            _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#F8F8F8")
 
             _statsChart.Refresh()
 
@@ -424,9 +483,9 @@ Public Class HistoryForm
     End Sub
 
     ''' <summary>
-    ''' Affiche un histogramme temporel pour les événements discrets
+    ''' Affiche une timeline visuelle pour les événements discrets
     ''' (PIR, détection de fumée, alarme, tamper, etc.)
-    ''' Regroupe les événements par tranches horaires pour une meilleure lisibilité
+    ''' Affiche des marqueurs temporels pour chaque événement
     ''' </summary>
     Private Sub DrawDiscreteEventsChart(stats As DeviceStatistics)
         _statsChart.Plot.Clear()
@@ -453,102 +512,15 @@ Public Class HistoryForm
             Dim endTime = events.Last().Timestamp
             Dim duration = endTime - startTime
 
-            ' Choisir la taille des bins selon la durée
-            Dim binSizeMinutes As Integer
-            Dim labelFormat As String
-
-            If duration.TotalHours <= 6 Then
-                binSizeMinutes = 15 ' 15 minutes pour moins de 6h
-                labelFormat = "HH:mm"
-            ElseIf duration.TotalHours <= 24 Then
-                binSizeMinutes = 60 ' 1 heure pour 24h
-                labelFormat = "HH:mm"
+            ' Si événements très rapprochés (< 1h), afficher une timeline avec marqueurs
+            ' Sinon afficher un histogramme groupé
+            If eventCount <= 50 AndAlso duration.TotalHours <= 6 Then
+                ' MODE TIMELINE : Afficher chaque événement individuellement
+                DrawTimelineWithMarkers(events, stats.Code)
             Else
-                binSizeMinutes = 120 ' 2 heures pour plus d'un jour
-                labelFormat = "dd/MM HH:mm"
+                ' MODE HISTOGRAMME : Grouper les événements
+                DrawHistogramGrouped(events, duration, stats)
             End If
-
-            ' Créer les bins (tranches de temps)
-            Dim bins As New Dictionary(Of DateTime, Integer)
-            For Each evt In events
-                ' Arrondir au bin le plus proche
-                Dim binTime = New DateTime(
-                    evt.Timestamp.Year,
-                    evt.Timestamp.Month,
-                    evt.Timestamp.Day,
-                    evt.Timestamp.Hour,
-                    (evt.Timestamp.Minute \ binSizeMinutes) * binSizeMinutes,
-                    0
-                )
-
-                If bins.ContainsKey(binTime) Then
-                    bins(binTime) += 1
-                Else
-                    bins(binTime) = 1
-                End If
-            Next
-
-            ' Convertir en tableaux pour ScottPlot
-            Dim binTimes = bins.Keys.OrderBy(Function(t) t).Select(Function(t) t.ToOADate()).ToArray()
-            Dim binCounts = bins.Keys.OrderBy(Function(t) t).Select(Function(t) CDbl(bins(t))).ToArray()
-
-            ' Si un seul bin, ajouter des bins vides avant et après pour la visualisation
-            If binTimes.Length = 1 Then
-                Dim singleTime = DateTime.FromOADate(binTimes(0))
-                Dim beforeTime = singleTime.AddMinutes(-binSizeMinutes).ToOADate()
-                Dim afterTime = singleTime.AddMinutes(binSizeMinutes).ToOADate()
-
-                binTimes = New Double() {beforeTime, binTimes(0), afterTime}
-                binCounts = New Double() {0, binCounts(0), 0}
-            End If
-
-            ' Créer un bar chart
-            Dim barWidth = binSizeMinutes / (24.0 * 60.0) ' Convertir en jours pour OADate
-            Dim barPlot = _statsChart.Plot.Add.Bars(binTimes, binCounts)
-
-            ' Styling des barres
-            For Each bar In barPlot.Bars
-                bar.FillColor = ScottPlot.Color.FromHex("#FF9500") ' Orange vif
-                bar.LineColor = ScottPlot.Color.FromHex("#FF6B00")
-                bar.LineWidth = 1
-                bar.Size = barWidth * 0.8 ' 80% de la largeur du bin pour laisser un peu d'espace
-            Next
-
-            ' Configuration de l'axe X (temps)
-            _statsChart.Plot.Axes.DateTimeTicksBottom()
-
-            ' Configuration de l'axe Y (nombre d'événements)
-            _statsChart.Plot.Axes.Left.Label.Text = "Nombre de détections"
-            _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
-            _statsChart.Plot.Axes.Left.Label.FontSize = 12
-            _statsChart.Plot.Axes.Left.Label.Bold = True
-
-            ' Forcer l'axe Y à commencer à 0
-            _statsChart.Plot.Axes.Left.Min = 0
-
-            ' Si max < 5, arrondir à 5 pour une meilleure lisibilité
-            Dim maxCount = binCounts.Max()
-            If maxCount < 5 Then
-                _statsChart.Plot.Axes.Left.Max = 5
-            End If
-
-            ' Titre avec informations supplémentaires
-            Dim title = GetChartTitle(stats.Code)
-            Dim binLabel = If(binSizeMinutes = 60, "heure", If(binSizeMinutes = 15, "15min", "2h"))
-            title &= $" ({eventCount} événement(s), groupés par {binLabel})"
-            If stats.TotalEvents > 0 AndAlso Not String.IsNullOrEmpty(stats.PeakActivityHour) Then
-                title &= $" - Pic: {stats.PeakActivityHour}"
-            End If
-            _statsChart.Plot.Title(title)
-
-            ' Style
-            _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
-            _statsChart.Plot.Grid.XAxisStyle.IsVisible = True
-            _statsChart.Plot.Grid.YAxisStyle.IsVisible = True
-            _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
-            _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
-
-            _statsChart.Refresh()
 
         Catch ex As Exception
             ' En cas d'erreur lors de la création du graphique, afficher un message
@@ -556,6 +528,199 @@ Public Class HistoryForm
                             "du graphique:" & vbCrLf &
                             ex.Message)
         End Try
+    End Sub
+
+    ''' <summary>
+    ''' Affiche une timeline avec des marqueurs pour chaque événement individuel
+    ''' </summary>
+    Private Sub DrawTimelineWithMarkers(events As List(Of DataPoint), code As String)
+        ' Créer une timeline horizontale avec des marqueurs verticaux
+        Dim timestamps = events.Select(Function(e) e.Timestamp.ToOADate()).ToArray()
+        Dim yValues = events.Select(Function(e) 0.5).ToArray() ' Tous au milieu
+
+        ' Ajouter des marqueurs pour chaque événement
+        Dim scatter = _statsChart.Plot.Add.Scatter(timestamps, yValues)
+        scatter.Color = ScottPlot.Color.FromHex("#FF3B30") ' Rouge vif pour les événements
+        scatter.MarkerSize = 12
+        scatter.MarkerShape = ScottPlot.MarkerShape.FilledDiamond
+        scatter.LineWidth = 0 ' Pas de ligne entre les points
+
+        ' Ajouter des lignes verticales pour chaque événement
+        For Each evt In events
+            Dim vLine = _statsChart.Plot.Add.VerticalLine(evt.Timestamp.ToOADate())
+            vLine.Color = ScottPlot.Color.FromHex("#FF3B30").WithAlpha(0.3)
+            vLine.LineWidth = 2
+            vLine.LinePattern = ScottPlot.LinePattern.Solid
+        Next
+
+        ' Ajouter une ligne horizontale de base
+        Dim baseLine = _statsChart.Plot.Add.HorizontalLine(0.5)
+        baseLine.Color = ScottPlot.Color.FromHex("#8E8E93")
+        baseLine.LineWidth = 2
+
+        ' Configuration de l'axe X (temps)
+        _statsChart.Plot.Axes.DateTimeTicksBottom()
+
+        ' Configuration de l'axe Y (masqué car juste une timeline)
+        _statsChart.Plot.Axes.Left.Min = 0
+        _statsChart.Plot.Axes.Left.Max = 1
+        _statsChart.Plot.Axes.Left.Label.Text = "Événements"
+        _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
+        _statsChart.Plot.Axes.Left.Label.FontSize = 12
+        _statsChart.Plot.Axes.Left.Label.Bold = True
+
+        ' Pas de ticks sur l'axe Y
+        _statsChart.Plot.Axes.Left.TickGenerator = New ScottPlot.TickGenerators.NumericManual(New Double() {}, New String() {})
+
+        ' Calculer l'intervalle moyen entre événements
+        Dim intervals As New List(Of TimeSpan)
+        For i As Integer = 1 To events.Count - 1
+            intervals.Add(events(i).Timestamp - events(i - 1).Timestamp)
+        Next
+
+        Dim avgInterval = If(intervals.Count > 0,
+            TimeSpan.FromSeconds(intervals.Average(Function(t) t.TotalSeconds)),
+            TimeSpan.Zero)
+
+        ' Titre avec statistiques
+        Dim title = GetChartTitle(code)
+        title &= $" - {events.Count} événement(s)"
+        If avgInterval.TotalSeconds > 0 Then
+            If avgInterval.TotalMinutes < 1 Then
+                title &= $" (intervalle moyen: {avgInterval.TotalSeconds:F0}s)"
+            ElseIf avgInterval.TotalHours < 1 Then
+                title &= $" (intervalle moyen: {avgInterval.TotalMinutes:F0}min)"
+            Else
+                title &= $" (intervalle moyen: {avgInterval.TotalHours:F1}h)"
+            End If
+        End If
+        _statsChart.Plot.Title(title)
+
+        ' Style
+        _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
+        _statsChart.Plot.Grid.XAxisStyle.IsVisible = True
+        _statsChart.Plot.Grid.YAxisStyle.IsVisible = False
+        _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+        _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFF9F0")
+
+        _statsChart.Refresh()
+    End Sub
+
+    ''' <summary>
+    ''' Affiche un histogramme groupé pour les événements nombreux ou sur longue période
+    ''' </summary>
+    Private Sub DrawHistogramGrouped(events As List(Of DataPoint), duration As TimeSpan, stats As DeviceStatistics)
+        Dim eventCount = events.Count
+
+        ' Choisir la taille des bins selon la durée
+        Dim binSizeMinutes As Integer
+        Dim labelFormat As String
+
+        If duration.TotalHours <= 6 Then
+            binSizeMinutes = 15 ' 15 minutes pour moins de 6h
+            labelFormat = "HH:mm"
+        ElseIf duration.TotalHours <= 24 Then
+            binSizeMinutes = 60 ' 1 heure pour 24h
+            labelFormat = "HH:mm"
+        Else
+            binSizeMinutes = 120 ' 2 heures pour plus d'un jour
+            labelFormat = "dd/MM HH:mm"
+        End If
+
+        ' Créer les bins (tranches de temps)
+        Dim bins As New Dictionary(Of DateTime, Integer)
+        For Each evt In events
+            ' Arrondir au bin le plus proche
+            Dim binTime = New DateTime(
+                evt.Timestamp.Year,
+                evt.Timestamp.Month,
+                evt.Timestamp.Day,
+                evt.Timestamp.Hour,
+                (evt.Timestamp.Minute \ binSizeMinutes) * binSizeMinutes,
+                0
+            )
+
+            If bins.ContainsKey(binTime) Then
+                bins(binTime) += 1
+            Else
+                bins(binTime) = 1
+            End If
+        Next
+
+        ' Convertir en tableaux pour ScottPlot
+        Dim binTimes = bins.Keys.OrderBy(Function(t) t).Select(Function(t) t.ToOADate()).ToArray()
+        Dim binCounts = bins.Keys.OrderBy(Function(t) t).Select(Function(t) CDbl(bins(t))).ToArray()
+
+        ' Si un seul bin, ajouter des bins vides avant et après pour la visualisation
+        If binTimes.Length = 1 Then
+            Dim singleTime = DateTime.FromOADate(binTimes(0))
+            Dim beforeTime = singleTime.AddMinutes(-binSizeMinutes).ToOADate()
+            Dim afterTime = singleTime.AddMinutes(binSizeMinutes).ToOADate()
+
+            binTimes = New Double() {beforeTime, binTimes(0), afterTime}
+            binCounts = New Double() {0, binCounts(0), 0}
+        End If
+
+        ' Créer un bar chart
+        Dim barWidth = binSizeMinutes / (24.0 * 60.0) ' Convertir en jours pour OADate
+        Dim barPlot = _statsChart.Plot.Add.Bars(binTimes, binCounts)
+
+        ' Styling des barres avec dégradé de couleur selon l'intensité
+        Dim maxCount = binCounts.Max()
+        For i As Integer = 0 To barPlot.Bars.Count - 1
+            Dim bar = barPlot.Bars(i)
+            Dim intensity = If(maxCount > 0, binCounts(i) / maxCount, 0)
+
+            ' Couleur du rouge vif au rouge foncé selon l'intensité
+            If intensity > 0.7 Then
+                bar.FillColor = ScottPlot.Color.FromHex("#FF3B30") ' Rouge vif pour haute activité
+                bar.LineColor = ScottPlot.Color.FromHex("#D32F2F")
+            ElseIf intensity > 0.4 Then
+                bar.FillColor = ScottPlot.Color.FromHex("#FF9500") ' Orange pour activité moyenne
+                bar.LineColor = ScottPlot.Color.FromHex("#F57C00")
+            Else
+                bar.FillColor = ScottPlot.Color.FromHex("#FFCC00") ' Jaune pour faible activité
+                bar.LineColor = ScottPlot.Color.FromHex("#FFA000")
+            End If
+
+            bar.LineWidth = 1
+            bar.Size = barWidth * 0.8 ' 80% de la largeur du bin pour laisser un peu d'espace
+        Next
+
+        ' Configuration de l'axe X (temps)
+        _statsChart.Plot.Axes.DateTimeTicksBottom()
+
+        ' Configuration de l'axe Y (nombre d'événements)
+        _statsChart.Plot.Axes.Left.Label.Text = "Nombre de détections"
+        _statsChart.Plot.Axes.Left.Label.ForeColor = ScottPlot.Color.FromHex("#1C1C1E")
+        _statsChart.Plot.Axes.Left.Label.FontSize = 12
+        _statsChart.Plot.Axes.Left.Label.Bold = True
+
+        ' Forcer l'axe Y à commencer à 0
+        _statsChart.Plot.Axes.Left.Min = 0
+
+        ' Si max < 5, arrondir à 5 pour une meilleure lisibilité
+        If maxCount < 5 Then
+            _statsChart.Plot.Axes.Left.Max = 5
+        End If
+
+        ' Titre avec informations supplémentaires
+        Dim title = GetChartTitle(stats.Code)
+        Dim binLabel = If(binSizeMinutes = 60, "heure", If(binSizeMinutes = 15, "15min", "2h"))
+        title &= $" ({eventCount} événement(s), groupés par {binLabel})"
+        If stats.TotalEvents > 0 AndAlso Not String.IsNullOrEmpty(stats.PeakActivityHour) Then
+            title &= $" - Pic: {stats.PeakActivityHour}"
+        End If
+        _statsChart.Plot.Title(title)
+
+        ' Style
+        _statsChart.Plot.Grid.MajorLineColor = ScottPlot.Color.FromHex("#E5E5EA")
+        _statsChart.Plot.Grid.XAxisStyle.IsVisible = True
+        _statsChart.Plot.Grid.YAxisStyle.IsVisible = True
+        _statsChart.Plot.FigureBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+        _statsChart.Plot.DataBackground.Color = ScottPlot.Color.FromHex("#FFFFFF")
+
+        _statsChart.Refresh()
     End Sub
 
     ''' <summary>
