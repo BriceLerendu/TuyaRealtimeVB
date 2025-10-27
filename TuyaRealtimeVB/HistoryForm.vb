@@ -533,7 +533,7 @@ Public Class HistoryForm
     ''' <summary>
     ''' Affiche une timeline avec des marqueurs pour chaque événement individuel
     ''' </summary>
-    Private Sub DrawTimelineWithMarkers(events As List(Of DataPoint), code As String)
+    Private Sub DrawTimelineWithMarkers(events As List(Of StatisticPoint), code As String)
         ' Créer une timeline horizontale avec des marqueurs verticaux
         Dim timestamps = events.Select(Function(e) e.Timestamp.ToOADate()).ToArray()
         Dim yValues = events.Select(Function(e) 0.5).ToArray() ' Tous au milieu
@@ -609,7 +609,7 @@ Public Class HistoryForm
     ''' <summary>
     ''' Affiche un histogramme groupé pour les événements nombreux ou sur longue période
     ''' </summary>
-    Private Sub DrawHistogramGrouped(events As List(Of DataPoint), duration As TimeSpan, stats As DeviceStatistics)
+    Private Sub DrawHistogramGrouped(events As List(Of StatisticPoint), duration As TimeSpan, stats As DeviceStatistics)
         Dim eventCount = events.Count
 
         ' Choisir la taille des bins selon la durée
