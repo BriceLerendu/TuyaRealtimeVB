@@ -364,24 +364,20 @@ Public Class TuyaHistoryService
                     End If
 
                 Case SensorVisualizationType.BinaryState
-                    ' États binaires: moyenne par heure (0 ou 1)
+                    ' États binaires: créer un point pour chaque changement d'état réel
+                    ' Cela permet d'afficher la vraie timeline avec tous les changements (PIR, switch, portes, etc.)
                     hourlyStats = relevantLogs _
-                        .GroupBy(Function(l) New DateTime(l.EventTime.Year, l.EventTime.Month, l.EventTime.Day, l.EventTime.Hour, 0, 0)) _
-                        .Select(Function(g)
-                                    ' Compter les états actifs (1, true, on, open)
-                                    Dim activeCount = g.Count(Function(l)
-                                                                  Dim v = l.Value?.ToLower()
-                                                                  Return v = "1" OrElse v = "true" OrElse v = "on" OrElse v = "open"
-                                                              End Function)
-                                    ' Valeur = 1 si majoritairement actif, 0 sinon
-                                    Dim avgValue = If(g.Count() > 0, CDbl(activeCount) / CDbl(g.Count()), 0.0)
+                        .OrderBy(Function(l) l.EventTime) _
+                        .Select(Function(l)
+                                    ' Convertir chaque log en point de données avec la vraie valeur d'état
+                                    Dim v = l.Value?.ToLower()
+                                    Dim stateValue = If(v = "1" OrElse v = "true" OrElse v = "on" OrElse v = "open", 1.0, 0.0)
                                     Return New StatisticPoint With {
-                                        .Timestamp = g.Key,
-                                        .Value = avgValue,
-                                        .Label = g.Key.ToString("HH:mm")
+                                        .Timestamp = l.EventTime,
+                                        .Value = stateValue,
+                                        .Label = l.EventTime.ToString("HH:mm:ss")
                                     }
                                 End Function) _
-                        .OrderBy(Function(s) s.Timestamp) _
                         .ToList()
 
                 Case Else ' NumericContinuous
@@ -815,16 +811,28 @@ Public Class TuyaHistoryService
         Dim codeLower = code.ToLower()
         Log($"  🔍 Détection type visualisation pour code: '{code}'")
 
-        ' 1. Événements ponctuels (PIR, fumée, tamper, alarme)
-        If codeLower.Contains("pir") OrElse codeLower.Contains("motion") OrElse
-           codeLower.Contains("presence") OrElse codeLower.Contains("smoke") OrElse
-           codeLower.Contains("tamper") OrElse codeLower.Contains("alarm") OrElse
-           codeLower.Contains("doorbell") OrElse codeLower.Contains("button") Then
-            Log($"  ✅ Type détecté: DiscreteEvents (mots-clés)")
-            Return SensorVisualizationType.DiscreteEvents
+        ' 1. D'abord, vérifier si les valeurs sont uniquement binaires (0/1, true/false)
+        ' Cette vérification est prioritaire pour gérer correctement les PIR et autres capteurs
+        ' qui peuvent renvoyer des états binaires plutôt que des événements ponctuels
+        If logs IsNot Nothing AndAlso logs.Count > 0 Then
+            Dim relevantLogs = logs.Where(Function(l) l.Code?.ToLower() = codeLower).ToList()
+            If relevantLogs.Count > 0 Then
+                Dim uniqueValues = relevantLogs.Select(Function(l) l.Value?.ToLower()).Distinct().Where(Function(v) Not String.IsNullOrEmpty(v)).ToList()
+                Log($"  🔍 Valeurs uniques trouvées: {String.Join(", ", uniqueValues)}")
+
+                ' Si uniquement des valeurs binaires → Timeline avec états
+                If uniqueValues.Count <= 2 AndAlso uniqueValues.Count > 0 AndAlso
+                   uniqueValues.All(Function(v) v = "0" OrElse v = "1" OrElse
+                                              v = "true" OrElse v = "false" OrElse
+                                              v = "on" OrElse v = "off" OrElse
+                                              v = "open" OrElse v = "close") Then
+                    Log($"  ✅ Type détecté: BinaryState (valeurs binaires détectées)")
+                    Return SensorVisualizationType.BinaryState
+                End If
+            End If
         End If
 
-        ' 2. États binaires (switch, porte, contact)
+        ' 2. États binaires par mots-clés (switch, porte, contact)
         If codeLower.Contains("switch") OrElse codeLower.Contains("door") OrElse
            codeLower.Contains("contact") OrElse codeLower.Contains("window") OrElse
            codeLower.Contains("lock") OrElse codeLower.Contains("opened") Then
@@ -832,22 +840,15 @@ Public Class TuyaHistoryService
             Return SensorVisualizationType.BinaryState
         End If
 
-        ' 3. Vérifier si les valeurs sont uniquement binaires (0/1, true/false)
-        If logs IsNot Nothing AndAlso logs.Count > 0 Then
-            Dim relevantLogs = logs.Where(Function(l) l.Code?.ToLower() = codeLower).ToList()
-            If relevantLogs.Count > 0 Then
-                Dim uniqueValues = relevantLogs.Select(Function(l) l.Value?.ToLower()).Distinct().Where(Function(v) Not String.IsNullOrEmpty(v)).ToList()
-                Log($"  🔍 Valeurs uniques trouvées: {String.Join(", ", uniqueValues)}")
-
-                ' Si uniquement des valeurs binaires
-                If uniqueValues.Count <= 2 AndAlso uniqueValues.Count > 0 AndAlso
-                   uniqueValues.All(Function(v) v = "0" OrElse v = "1" OrElse
-                                              v = "true" OrElse v = "false" OrElse
-                                              v = "on" OrElse v = "off") Then
-                    Log($"  ✅ Type détecté: BinaryState (valeurs binaires)")
-                    Return SensorVisualizationType.BinaryState
-                End If
-            End If
+        ' 3. Événements ponctuels par mots-clés (PIR, fumée, tamper, alarme)
+        ' Note: Cette vérification vient après la détection des valeurs binaires
+        ' pour permettre aux PIR avec états binaires d'être affichés comme timeline
+        If codeLower.Contains("pir") OrElse codeLower.Contains("motion") OrElse
+           codeLower.Contains("presence") OrElse codeLower.Contains("smoke") OrElse
+           codeLower.Contains("tamper") OrElse codeLower.Contains("alarm") OrElse
+           codeLower.Contains("doorbell") OrElse codeLower.Contains("button") Then
+            Log($"  ✅ Type détecté: DiscreteEvents (mots-clés)")
+            Return SensorVisualizationType.DiscreteEvents
         End If
 
         ' 4. Par défaut: valeurs numériques continues
