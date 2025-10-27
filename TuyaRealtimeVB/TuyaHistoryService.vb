@@ -331,36 +331,46 @@ Public Class TuyaHistoryService
 
             Select Case vizType
                 Case SensorVisualizationType.DiscreteEvents
-                    ' Événements ponctuels: compter seulement les détections actives (pas les "none", "clear", etc.)
-                    ' Filtrer pour ne garder que les événements de détection
-                    Dim detectionLogs = relevantLogs _
+                    ' ✅ CHANGEMENT: Afficher TOUS les événements (pas seulement les détections)
+                    ' pour permettre de visualiser les transitions (pir/none, open/close, etc.)
+                    ' avec des couleurs différentes selon l'état
+                    Log($"  📊 Événements discrets: {relevantLogs.Count} au total")
+
+                    ' Créer un point pour chaque événement avec sa valeur brute
+                    hourlyStats = relevantLogs _
+                        .OrderBy(Function(l) l.EventTime) _
+                        .Select(Function(l)
+                                    Return New StatisticPoint With {
+                                        .Timestamp = l.EventTime,
+                                        .Value = 1.0,
+                                        .Label = l.EventTime.ToString("HH:mm:ss"),
+                                        .OriginalValue = l.Value
+                                    }
+                                End Function) _
+                        .ToList()
+
+                    ' Compter les événements actifs pour les statistiques
+                    totalEvents = relevantLogs _
                         .Where(Function(l)
                                    Dim v = l.Value?.ToLower()
-                                   ' Garder les événements de détection, ignorer "none", "clear", "0", "false"
                                    Return Not String.IsNullOrEmpty(v) AndAlso
                                           v <> "none" AndAlso v <> "clear" AndAlso
                                           v <> "0" AndAlso v <> "false" AndAlso v <> "off"
                                End Function) _
-                        .ToList()
+                        .Count()
 
-                    Log($"  📊 Événements de détection filtrés: {detectionLogs.Count}/{relevantLogs.Count}")
-
-                    ' Grouper par heure et compter
-                    Dim grouped = detectionLogs _
-                        .GroupBy(Function(l) New DateTime(l.EventTime.Year, l.EventTime.Month, l.EventTime.Day, l.EventTime.Hour, 0, 0)) _
-                        .Select(Function(g) New StatisticPoint With {
-                            .Timestamp = g.Key,
-                            .Value = g.Count(),
-                            .Label = g.Key.ToString("HH:mm")
+                    ' Calculer le pic d'activité par heure
+                    Dim grouped = hourlyStats _
+                        .GroupBy(Function(p) New DateTime(p.Timestamp.Year, p.Timestamp.Month, p.Timestamp.Day, p.Timestamp.Hour, 0, 0)) _
+                        .Select(Function(g) New With {
+                            .Hour = g.Key,
+                            .Count = g.Count()
                         }) _
-                        .OrderBy(Function(s) s.Timestamp) _
-                        .ToList()
+                        .OrderByDescending(Function(x) x.Count) _
+                        .FirstOrDefault()
 
-                    hourlyStats = grouped
-                    totalEvents = detectionLogs.Count
-                    If grouped.Count > 0 Then
-                        Dim maxPoint = grouped.OrderByDescending(Function(p) p.Value).First()
-                        peakHour = maxPoint.Label
+                    If grouped IsNot Nothing Then
+                        peakHour = grouped.Hour.ToString("HH:mm")
                     End If
 
                 Case SensorVisualizationType.BinaryState
@@ -375,7 +385,8 @@ Public Class TuyaHistoryService
                                     Return New StatisticPoint With {
                                         .Timestamp = l.EventTime,
                                         .Value = stateValue,
-                                        .Label = l.EventTime.ToString("HH:mm:ss")
+                                        .Label = l.EventTime.ToString("HH:mm:ss"),
+                                        .OriginalValue = l.Value
                                     }
                                 End Function) _
                         .ToList()

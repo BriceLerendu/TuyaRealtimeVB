@@ -63,6 +63,12 @@ Public Class StatisticPoint
     ''' Label pour affichage (ex: "Lun 12:00")
     ''' </summary>
     Public Property Label As String
+
+    ''' <summary>
+    ''' Valeur brute originale de l'événement (ex: "pir", "none", "true", "false", "open", "close")
+    ''' Utilisée pour afficher les événements avec des couleurs spécifiques
+    ''' </summary>
+    Public Property OriginalValue As String = ""
 End Class
 
 ''' <summary>
