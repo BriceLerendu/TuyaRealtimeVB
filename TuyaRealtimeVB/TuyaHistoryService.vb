@@ -58,8 +58,17 @@ Public Class TuyaHistoryService
                                 .OrderBy(Function(c) c) _
                                 .ToList()
 
+            ' 🔍 DIAGNOSTIC: Compter les codes avec notation pointée (sous-propriétés)
+            Dim subPropertyCount = allCodes.Where(Function(c) c.Contains(".")).Count()
+
             Log($"🔍 Codes DP disponibles: {String.Join(", ", allCodes)}")
-            Log($"   Total: {allCodes.Count} codes (incluant sous-propriétés explosées)")
+            Log($"   Total: {allCodes.Count} codes ({subPropertyCount} sous-propriétés avec notation pointée)")
+
+            ' 🔍 DIAGNOSTIC: Afficher spécifiquement les codes phase_*
+            Dim phaseCodes = allCodes.Where(Function(c) c.ToLower().StartsWith("phase_")).ToList()
+            If phaseCodes.Count > 0 Then
+                Log($"   Phase codes trouvés: {String.Join(", ", phaseCodes)}")
+            End If
 
             Return allCodes
 
@@ -746,74 +755,79 @@ Public Class TuyaHistoryService
             If logsArray IsNot Nothing Then
                 Log($"    📊 API v1.0 retourné {logsArray.Count} logs")
                 For Each item As JToken In logsArray
-                    Dim jItem = CType(item, JObject)
-                    Dim timestamp = jItem("event_time")?.ToObject(Of Long)()
-                    Dim code = jItem("code")?.ToString()
-                    Dim value = jItem("value")?.ToString()
+                        Dim jItem = CType(item, JObject)
+                        Dim timestamp = jItem("event_time")?.ToObject(Of Long)()
+                        Dim code = jItem("code")?.ToString()
+                        Dim value = jItem("value")?.ToString()
 
-                    If timestamp.HasValue Then
-                        ' event_time est en millisecondes
-                        Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
+                        If timestamp.HasValue Then
+                            ' event_time est en millisecondes
+                            Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
 
-                        ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
-                        If IsJsonValue(value) Then
-                            Try
-                                Dim jsonObj = JObject.Parse(value)
+                            ' 🔍 DIAGNOSTIC: Afficher les valeurs phase_a pour déboguer
+                            If code?.ToLower() = "phase_a" OrElse code?.ToLower() = "phase_b" OrElse code?.ToLower() = "phase_c" Then
+                                Log($"  🔍 DEBUG phase: code={code}, value={value?.Substring(0, Math.Min(100, value?.Length ?? 0))}, isJSON={IsJsonValue(value)}")
+                            End If
 
-                                ' Créer un log pour chaque sous-propriété
-                                For Each prop In jsonObj.Properties()
-                                    Dim subPropertyCode = $"{code}.{prop.Name}"
-                                    Dim subPropertyValue = prop.Value.ToString()
-                                    Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
-                                    Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
+                            ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
+                            If IsJsonValue(value) Then
+                                Try
+                                    Dim jsonObj = JObject.Parse(value)
 
-                                    allLogs.Add(New DeviceLog With {
+                                    ' Créer un log pour chaque sous-propriété
+                                    For Each prop In jsonObj.Properties()
+                                        Dim subPropertyCode = $"{code}.{prop.Name}"
+                                        Dim subPropertyValue = prop.Value.ToString()
+                                        Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
+                                        Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
+
+                                        allLogs.Add(New DeviceLog With {
                                             .EventTime = dt,
                                             .Code = subPropertyCode,
                                             .Value = subPropertyValue,
                                             .EventType = eventType,
                                             .Description = description
                                         })
-                                Next
+                                    Next
 
-                                ' On garde aussi le log parent pour compatibilité
-                                Dim parentEventType = DetermineEventType(code, value)
-                                Dim parentDescription = CreateEventDescription(code, value, parentEventType)
+                                    ' On garde aussi le log parent pour compatibilité
+                                    Dim parentEventType = DetermineEventType(code, value)
+                                    Dim parentDescription = CreateEventDescription(code, value, parentEventType)
 
-                                allLogs.Add(New DeviceLog With {
+                                    allLogs.Add(New DeviceLog With {
                                         .EventTime = dt,
                                         .Code = code,
                                         .Value = value,
                                         .EventType = parentEventType,
                                         .Description = parentDescription
                                     })
-                            Catch ex As Exception
-                                ' Si l'explosion échoue, traiter comme un log normal
-                                Dim eventType = DetermineEventType(code, value)
-                                Dim description = CreateEventDescription(code, value, eventType)
+                                Catch ex As Exception
+                                    ' Si l'explosion échoue, traiter comme un log normal
+                                    Dim eventType = DetermineEventType(code, value)
+                                    Dim description = CreateEventDescription(code, value, eventType)
 
-                                allLogs.Add(New DeviceLog With {
+                                    allLogs.Add(New DeviceLog With {
                                         .EventTime = dt,
                                         .Code = code,
                                         .Value = value,
                                         .EventType = eventType,
                                         .Description = description
                                     })
-                            End Try
-                        Else
-                            ' Valeur non-JSON, traiter normalement
-                            Dim eventType = DetermineEventType(code, value)
-                            Dim description = CreateEventDescription(code, value, eventType)
+                                End Try
+                            Else
+                                ' Valeur non-JSON, traiter normalement
+                                Dim eventType = DetermineEventType(code, value)
+                                Dim description = CreateEventDescription(code, value, eventType)
 
-                            allLogs.Add(New DeviceLog With {
+                                allLogs.Add(New DeviceLog With {
                                     .EventTime = dt,
                                     .Code = code,
                                     .Value = value,
                                     .EventType = eventType,
                                     .Description = description
                                 })
+                            End If
                         End If
-                    End If
                 Next
             Else
                 Log($"    ⚠️ API v1.0 logsArray = null")
@@ -868,6 +882,11 @@ Public Class TuyaHistoryService
 
                             If timestamp.HasValue Then
                                 Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
+
+                                ' 🔍 DIAGNOSTIC: Afficher les valeurs phase_a pour déboguer
+                                If code?.ToLower() = "phase_a" OrElse code?.ToLower() = "phase_b" OrElse code?.ToLower() = "phase_c" Then
+                                    Log($"  🔍 DEBUG phase (v2.0): code={code}, value={value?.Substring(0, Math.Min(100, value?.Length ?? 0))}, isJSON={IsJsonValue(value)}")
+                                End If
 
                                 ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
                                 If IsJsonValue(value) Then
