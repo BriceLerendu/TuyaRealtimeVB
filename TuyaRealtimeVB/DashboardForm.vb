@@ -835,8 +835,10 @@ Public Class DashboardForm
     End Function
 
     Private Sub ProcessPhaseData(card As DeviceCard, phase As String, value As String)
+        ' ✅ SIMPLIFIÉ: Laisser UpdateProperty() gérer automatiquement l'expansion JSON
+        ' Si c'est du JSON, ExpandJsonProperty() créera phase_a.voltage, phase_a.electricCurrent, etc.
         If value.StartsWith("{") Then
-            DecodePhaseJSON(card, phase, value)
+            card.UpdateProperty(phase, value)
         ElseIf value.Contains("=") OrElse value.Length Mod 4 = 0 Then
             DecodePhaseData(card, phase, value)
         Else
@@ -1035,11 +1037,12 @@ Public Class DashboardForm
 
     Private Sub UpdatePhaseProperties(card As DeviceCard, phase As String,
                                      voltage As Double, current As Double, power As Double)
-        If voltage > 0 Then card.UpdateProperty($"{phase}_V", voltage.ToString("F1"))
-        If current > 0 Then card.UpdateProperty($"{phase}_I", current.ToString("F3"))
+        ' ✅ MODIFIÉ: Utiliser notation pointée pour cohérence avec ExpandJsonProperty
+        If voltage > 0 Then card.UpdateProperty($"{phase}.voltage", voltage.ToString("F1"))
+        If current > 0 Then card.UpdateProperty($"{phase}.electricCurrent", current.ToString("F3"))
         If power >= 0 Then
             If power < 10 Then power *= 1000
-            card.UpdateProperty($"{phase}_P", power.ToString("F0"))
+            card.UpdateProperty($"{phase}.power", power.ToString("F0"))
         End If
     End Sub
 
@@ -1066,9 +1069,10 @@ Public Class DashboardForm
         Dim current = (CInt(bytes(2)) << 8) Or bytes(3)
         Dim power = bytes(4)
 
-        card.UpdateProperty($"{phase}_V", (voltage / 10.0).ToString("F1"))
-        card.UpdateProperty($"{phase}_I", (current / 1000.0).ToString("F3"))
-        card.UpdateProperty($"{phase}_P", power.ToString())
+        ' ✅ MODIFIÉ: Utiliser notation pointée pour cohérence avec ExpandJsonProperty
+        card.UpdateProperty($"{phase}.voltage", (voltage / 10.0).ToString("F1"))
+        card.UpdateProperty($"{phase}.electricCurrent", (current / 1000.0).ToString("F3"))
+        card.UpdateProperty($"{phase}.power", power.ToString())
 
         LogDebug($"    → V={voltage / 10.0:F1}V, I={current / 1000.0:F3}A, P={power}W")
     End Sub
@@ -1078,10 +1082,11 @@ Public Class DashboardForm
         Dim current = (CInt(bytes(2)) << 8) Or bytes(3)
         Dim power = (CInt(bytes(4)) << 8) Or bytes(5)
 
+        ' ✅ MODIFIÉ: Utiliser notation pointée pour cohérence avec ExpandJsonProperty
         If voltage >= 2000 AndAlso voltage <= 2500 Then
-            card.UpdateProperty($"{phase}_V", (voltage / 10.0).ToString("F1"))
-            card.UpdateProperty($"{phase}_I", (current / 1000.0).ToString("F3"))
-            card.UpdateProperty($"{phase}_P", power.ToString())
+            card.UpdateProperty($"{phase}.voltage", (voltage / 10.0).ToString("F1"))
+            card.UpdateProperty($"{phase}.electricCurrent", (current / 1000.0).ToString("F3"))
+            card.UpdateProperty($"{phase}.power", power.ToString())
             LogDebug($"    → V={voltage / 10.0:F1}V, I={current / 1000.0:F3}A, P={power}W")
         Else
             LogDebug($"    ⚠ Valeurs hors plage: V={voltage}")
