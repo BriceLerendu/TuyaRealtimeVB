@@ -753,13 +753,14 @@ Public Class DashboardForm
 
             LogDebug($"✓ {_deviceInfoCache.Count} appareils chargés en cache")
 
+            ' ✅ FIX: Attendre que toutes les cartes soient créées avant de continuer
+            ' Cela garantit que LoadInitialDeviceStatesAsync() trouvera les cartes dans _deviceCards
+            Await DisplayDevicesByRoomAsync()
+            LogDebug($"✓ {_deviceCards.Count} cartes d'appareils créées et prêtes")
+
             If InvokeRequired Then
-                Invoke(Sub()
-                           DisplayDevicesByRoom()
-                           PopulateRoomFilter()
-                       End Sub)
+                Invoke(Sub() PopulateRoomFilter())
             Else
-                DisplayDevicesByRoom()
                 PopulateRoomFilter()
             End If
         Catch ex As Exception
@@ -771,6 +772,13 @@ Public Class DashboardForm
         Try
             Dim total = _deviceCards.Count
             LogDebug($"=== CHARGEMENT BATCH DES ÉTATS ({total} appareils) ===")
+
+            ' ✅ VALIDATION: Vérifier qu'on a bien des cartes à ce stade
+            If total = 0 Then
+                LogDebug("⚠️ ATTENTION: Aucune carte trouvée dans _deviceCards!")
+                LogDebug($"   _deviceInfoCache contient {_deviceInfoCache.Count} appareils")
+                Return
+            End If
 
             ' Récupérer tous les device IDs
             Dim allDeviceIds = _deviceCards.Keys.ToList()
@@ -1117,7 +1125,7 @@ Public Class DashboardForm
     ''' <summary>
     ''' ✅ PHASE 5 - Optimisé avec rendu progressif pour 500+ appareils
     ''' </summary>
-    Private Sub DisplayDevicesByRoom()
+    Private Async Function DisplayDevicesByRoomAsync() As Task
         Try
             ' Annuler tout rendu progressif en cours
             _progressiveRenderCancellation?.Cancel()
@@ -1135,7 +1143,7 @@ Public Class DashboardForm
             ' ✅ PHASE 5 - Utiliser rendu progressif si > 100 appareils
             If totalDevices > 100 Then
                 LogDebug($"🔄 Rendu progressif activé pour {totalDevices} appareils...")
-                DisplayDevicesByRoomProgressiveAsync(devicesByRoom, _progressiveRenderCancellation.Token)
+                Await DisplayDevicesByRoomProgressiveAsync(devicesByRoom, _progressiveRenderCancellation.Token)
             Else
                 ' Rendu classique pour petit nombre d'appareils
                 For Each roomGroup In devicesByRoom
@@ -1149,14 +1157,14 @@ Public Class DashboardForm
             LogDebug($"ERREUR DisplayDevicesByRoom: {ex.Message}")
             _devicesPanel.ResumeLayout()
         End Try
-    End Sub
+    End Function
 
     ''' <summary>
     ''' ✅ PHASE 5 - Rendu progressif par lots pour éviter de bloquer l'UI
     ''' </summary>
-    Private Async Sub DisplayDevicesByRoomProgressiveAsync(
+    Private Async Function DisplayDevicesByRoomProgressiveAsync(
         devicesByRoom As List(Of IGrouping(Of String, DeviceInfo)),
-        cancellationToken As Threading.CancellationToken)
+        cancellationToken As Threading.CancellationToken) As Task
 
         _isProgressiveRendering = True
 
@@ -1452,11 +1460,11 @@ Public Class DashboardForm
 #End Region
 
 #Region "Gestionnaires d'événements UI"
-    Private Sub RoomFilter_Changed(sender As Object, e As EventArgs)
+    Private Async Sub RoomFilter_Changed(sender As Object, e As EventArgs)
         Try
             Dim selectedItem = _roomFilterComboBox.SelectedItem?.ToString()
             _selectedRoomFilter = If(selectedItem = "Toutes les pièces", Nothing, selectedItem)
-            DisplayDevicesByRoom()
+            Await DisplayDevicesByRoomAsync()
             LogDebug($"Filtre appliqué : {If(_selectedRoomFilter, "Toutes les pièces")}")
         Catch ex As Exception
             LogDebug($"ERREUR RoomFilter_Changed: {ex.Message}")
@@ -1716,7 +1724,7 @@ Public Class DashboardForm
 
                     ' Les modifications dans HomeAdminForm ont déjà mis à jour _preloadedDevices (cache local)
                     ' Pas besoin de recharger depuis l'API, juste rafraîchir l'affichage !
-                    DisplayDevicesByRoom()
+                    Await DisplayDevicesByRoomAsync()
 
                     LogDebug("=== RAFRAÎCHISSEMENT TERMINÉ ===")
                     UpdateStatus("Affichage rafraîchi après administration")
