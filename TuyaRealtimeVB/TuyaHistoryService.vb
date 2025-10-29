@@ -58,8 +58,17 @@ Public Class TuyaHistoryService
                                 .OrderBy(Function(c) c) _
                                 .ToList()
 
+            ' 🔍 DIAGNOSTIC: Compter les codes avec notation pointée (sous-propriétés)
+            Dim subPropertyCount = allCodes.Where(Function(c) c.Contains(".")).Count()
+
             Log($"🔍 Codes DP disponibles: {String.Join(", ", allCodes)}")
-            Log($"   Total: {allCodes.Count} codes (incluant sous-propriétés explosées)")
+            Log($"   Total: {allCodes.Count} codes ({subPropertyCount} sous-propriétés avec notation pointée)")
+
+            ' 🔍 DIAGNOSTIC: Afficher spécifiquement les codes phase_*
+            Dim phaseCodes = allCodes.Where(Function(c) c.ToLower().StartsWith("phase_")).ToList()
+            If phaseCodes.Count > 0 Then
+                Log($"   Phase codes trouvés: {String.Join(", ", phaseCodes)}")
+            End If
 
             Return allCodes
 
@@ -755,6 +764,11 @@ Public Class TuyaHistoryService
                             ' event_time est en millisecondes
                             Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
 
+                            ' 🔍 DIAGNOSTIC: Afficher les valeurs phase_a pour déboguer
+                            If code?.ToLower() = "phase_a" OrElse code?.ToLower() = "phase_b" OrElse code?.ToLower() = "phase_c" Then
+                                Log($"  🔍 DEBUG phase: code={code}, value={value?.Substring(0, Math.Min(100, value?.Length ?? 0))}, isJSON={IsJsonValue(value)}")
+                            End If
+
                             ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
                             If IsJsonValue(value) Then
                                 Try
@@ -868,6 +882,11 @@ Public Class TuyaHistoryService
 
                             If timestamp.HasValue Then
                                 Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
+
+                                ' 🔍 DIAGNOSTIC: Afficher les valeurs phase_a pour déboguer
+                                If code?.ToLower() = "phase_a" OrElse code?.ToLower() = "phase_b" OrElse code?.ToLower() = "phase_c" Then
+                                    Log($"  🔍 DEBUG phase (v2.0): code={code}, value={value?.Substring(0, Math.Min(100, value?.Length ?? 0))}, isJSON={IsJsonValue(value)}")
+                                End If
 
                                 ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
                                 If IsJsonValue(value) Then
