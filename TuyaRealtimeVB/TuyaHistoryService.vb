@@ -777,7 +777,9 @@ Public Class TuyaHistoryService
             Dim code = jItem("code")?.ToString()
             Dim value = jItem("value")?.ToString()
 
-            If Not timestamp.HasValue Then Return logs
+            If Not timestamp.HasValue Then
+                Return logs
+            End If
 
             ' event_time est en millisecondes
             Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
