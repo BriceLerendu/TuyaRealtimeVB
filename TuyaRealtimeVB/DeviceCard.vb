@@ -358,7 +358,7 @@ Public Class DeviceCard
         Using g As Graphics = Graphics.FromImage(_cachedBitmap)
             g.SmoothingMode = SmoothingMode.AntiAlias
             g.PixelOffsetMode = PixelOffsetMode.HighQuality
-            g.Clear(Me.Parent?.BackColor If Me.Parent IsNot Nothing Else Color.White)
+            g.Clear(If(Me.Parent IsNot Nothing, Me.Parent.BackColor, Color.White))
 
             Dim rect = New Rectangle(2, 2, Me.Width - 5, Me.Height - 5)
 
