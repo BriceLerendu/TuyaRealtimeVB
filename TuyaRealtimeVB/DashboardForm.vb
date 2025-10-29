@@ -789,8 +789,8 @@ Public Class DashboardForm
             ' Récupérer tous les device IDs
             Dim allDeviceIds = _deviceCards.Keys.ToList()
 
-            ' ✅ PHASE 6 - Augmentation batch size de 20 à 50 pour réduire le nombre d'appels API
-            Dim batchSize = 50
+            ' ⚠️ LIMITE API TUYA: Maximum 20 devices par batch (ne pas augmenter)
+            Dim batchSize = 20
             Dim batchCount = CInt(Math.Ceiling(allDeviceIds.Count / CDbl(batchSize)))
             Dim processedCount = 0
 

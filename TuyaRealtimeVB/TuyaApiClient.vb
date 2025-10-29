@@ -419,9 +419,9 @@ Public Class TuyaApiClient
                 Return results
             End If
 
-            ' ✅ PHASE 6 - Augmentation batch size de 20 à 50 pour meilleure performance
-            ' API Tuya supporte jusqu'à 50 devices par batch selon tests
-            Dim batchSize = Math.Min(deviceIds.Count, 50)
+            ' ⚠️ LIMITE API TUYA: Maximum 20 devices par batch (documenté et testé)
+            ' Ne pas augmenter au-delà de 20 sinon réponse vide/invalide
+            Dim batchSize = Math.Min(deviceIds.Count, 20)
             Dim deviceIdsToQuery = deviceIds.Take(batchSize).ToList()
 
             _totalApiCalls += 1
