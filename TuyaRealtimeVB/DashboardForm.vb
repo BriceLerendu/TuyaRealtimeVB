@@ -1240,7 +1240,7 @@ Public Class DashboardForm
                 _devicesPanel.ResumeLayout()
             End If
         End Try
-    End Sub
+    End Function
 
     Private Function ApplyRoomFilter() As IEnumerable(Of DeviceInfo)
         Dim devices = _deviceInfoCache.Values.AsEnumerable()
