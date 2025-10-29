@@ -271,15 +271,34 @@ Public Class TuyaPulsarOfficialClient
     End Function
 
     ''' <summary>
-    ''' Nettoie les caractères de contrôle du JSON décrypté
+    ''' ✅ PHASE 1 - Nettoie les caractères de contrôle du JSON décrypté (optimisé avec ArrayPool)
     ''' </summary>
     Private Function CleanControlCharacters(input As String) As String
         If String.IsNullOrEmpty(input) Then
             Return input
         End If
 
-        ' Supprimer tous les caractères de contrôle et NULL bytes
-        Return New String(input.Where(Function(c) Not Char.IsControl(c) OrElse c = vbLf OrElse c = vbCr OrElse c = vbTab).ToArray()).Trim()
+        ' ✅ PHASE 1 - Optimisation: Utiliser ArrayPool pour éviter les allocations
+        Dim buffer As Char() = ArrayPool(Of Char).Shared.Rent(input.Length)
+        Dim writeIndex As Integer = 0
+
+        Try
+            ' Copier uniquement les caractères valides
+            For i As Integer = 0 To input.Length - 1
+                Dim c As Char = input(i)
+                ' Garder les caractères non-contrôle ou les whitespaces autorisés (LF, CR, Tab)
+                If Not Char.IsControl(c) OrElse c = vbLf OrElse c = vbCr OrElse c = vbTab Then
+                    buffer(writeIndex) = c
+                    writeIndex += 1
+                End If
+            Next
+
+            ' Créer la string finale et trim
+            Return New String(buffer, 0, writeIndex).Trim()
+        Finally
+            ' Retourner le buffer au pool
+            ArrayPool(Of Char).Shared.Return(buffer)
+        End Try
     End Function
 
     Public Sub [Stop]() Implements ITuyaRealtimeClient.Stop

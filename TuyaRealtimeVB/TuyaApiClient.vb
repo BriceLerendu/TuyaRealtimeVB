@@ -1,8 +1,10 @@
-﻿Imports System.Net.Http
+Imports System.Net.Http
 Imports System.Diagnostics
+Imports System.Threading
 Imports Newtonsoft.Json.Linq
 
 Public Class TuyaApiClient
+    Implements IDisposable
 
 #Region "Constantes"
     Private Const API_VERSION_DEVICES As String = "/v1.0/devices/"
@@ -33,6 +35,10 @@ Public Class TuyaApiClient
     Private ReadOnly _specificationsCacheByCategory As New Dictionary(Of String, JObject)
     ' Mapping deviceId -> category pour récupération rapide
     Private ReadOnly _deviceCategoryMap As New Dictionary(Of String, String)
+
+    ' ✅ PHASE 1 - Optimisation: Timer pour nettoyage automatique du cache
+    Private _cacheCleanupTimer As Timer
+    Private Const CACHE_CLEANUP_INTERVAL_MS As Integer = 60000  ' Nettoyer toutes les minutes
 #End Region
 
 #Region "Initialisation"
@@ -40,6 +46,25 @@ Public Class TuyaApiClient
         _cfg = cfg
         _tokenProvider = tokenProvider
         _logCallback = logCallback
+
+        ' ✅ PHASE 1 - Optimisation: Démarrer le timer de nettoyage automatique du cache
+        _cacheCleanupTimer = New Timer(
+            AddressOf AutoClearExpiredCache,
+            Nothing,
+            CACHE_CLEANUP_INTERVAL_MS,
+            CACHE_CLEANUP_INTERVAL_MS)
+    End Sub
+
+    ''' <summary>
+    ''' ✅ PHASE 1 - Callback du timer pour nettoyer automatiquement le cache
+    ''' </summary>
+    Private Sub AutoClearExpiredCache(state As Object)
+        Try
+            ClearExpiredCache()
+        Catch ex As Exception
+            ' Silencieux - ne pas crasher sur un nettoyage de cache
+            Log($"Erreur nettoyage automatique cache: {ex.Message}")
+        End Try
     End Sub
 #End Region
 
@@ -1669,6 +1694,18 @@ Public Class TuyaApiClient
             Return False
         End Try
     End Function
+#End Region
+
+#Region "IDisposable"
+    ''' <summary>
+    ''' ✅ PHASE 1 - Nettoyage des ressources
+    ''' </summary>
+    Public Sub Dispose() Implements IDisposable.Dispose
+        If _cacheCleanupTimer IsNot Nothing Then
+            _cacheCleanupTimer.Dispose()
+            _cacheCleanupTimer = Nothing
+        End If
+    End Sub
 #End Region
 
 End Class

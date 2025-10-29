@@ -70,6 +70,11 @@ Public Class DeviceCard
     ' Debouncing des mises à jour UI
     Private _updateTimer As Timer
     Private ReadOnly _pendingUpdates As New Dictionary(Of String, String)
+
+    ' ✅ PHASE 1 - Optimisation: Cache des GraphicsPath pour éviter recréations
+    Private _cachedMainPath As GraphicsPath
+    Private _cachedFooterPath As GraphicsPath
+    Private _isPathCacheValid As Boolean = False
 #End Region
 
 #Region "Champs privés - Managers"
@@ -143,6 +148,16 @@ Public Class DeviceCard
                 _updateTimer.Stop()
                 _updateTimer.Dispose()
                 _updateTimer = Nothing
+            End If
+
+            ' ✅ PHASE 1 - Nettoyer les GraphicsPath en cache
+            If _cachedMainPath IsNot Nothing Then
+                _cachedMainPath.Dispose()
+                _cachedMainPath = Nothing
+            End If
+            If _cachedFooterPath IsNot Nothing Then
+                _cachedFooterPath.Dispose()
+                _cachedFooterPath = Nothing
             End If
 
             ' Nettoyer les contrôles
@@ -314,14 +329,37 @@ Public Class DeviceCard
 
         Dim rect = New Rectangle(2, 2, Me.Width - 5, Me.Height - 5)
 
-        Using path = CreateRoundedPath(rect, CORNER_RADIUS)
-            DrawShadow(g, rect)
-            DrawBackground(g, path, rect)
-            DrawFooter(g, rect)
-            DrawBorder(g, path)
-            DrawHighlight(g, rect)
-        End Using
+        ' ✅ PHASE 1 - Utiliser le cache des GraphicsPath
+        Dim path = GetOrCreateCachedPath(rect, CORNER_RADIUS)
+        DrawShadow(g, rect)
+        DrawBackground(g, path, rect)
+        DrawFooter(g, rect)
+        DrawBorder(g, path)
+        DrawHighlight(g, rect)
     End Sub
+
+    ''' <summary>
+    ''' ✅ PHASE 1 - Obtient ou crée le GraphicsPath en cache pour éviter recréations
+    ''' </summary>
+    Private Function GetOrCreateCachedPath(rect As Rectangle, radius As Integer) As GraphicsPath
+        ' Invalider le cache si la taille a changé
+        If _cachedMainPath IsNot Nothing Then
+            Dim bounds = _cachedMainPath.GetBounds()
+            If bounds.Width <> rect.Width OrElse bounds.Height <> rect.Height Then
+                _isPathCacheValid = False
+                _cachedMainPath.Dispose()
+                _cachedMainPath = Nothing
+            End If
+        End If
+
+        ' Créer le path si nécessaire
+        If Not _isPathCacheValid OrElse _cachedMainPath Is Nothing Then
+            _cachedMainPath = CreateRoundedPath(rect, radius)
+            _isPathCacheValid = True
+        End If
+
+        Return _cachedMainPath
+    End Function
 
     Private Function CreateRoundedPath(rect As Rectangle, radius As Integer) As GraphicsPath
         Dim path = New GraphicsPath()
