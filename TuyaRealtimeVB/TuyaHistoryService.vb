@@ -781,16 +781,65 @@ Public Class TuyaHistoryService
                         If timestamp.HasValue Then
                             ' event_time est en millisecondes
                             Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
-                            Dim eventType = DetermineEventType(code, value)
-                            Dim description = CreateEventDescription(code, value, eventType)
 
-                            allLogs.Add(New DeviceLog With {
-                                .EventTime = dt,
-                                .Code = code,
-                                .Value = value,
-                                .EventType = eventType,
-                                .Description = description
-                            })
+                            ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
+                            If IsJsonValue(value) Then
+                                Try
+                                    Dim jsonObj = JObject.Parse(value)
+
+                                    ' Créer un log pour chaque sous-propriété
+                                    For Each prop In jsonObj.Properties()
+                                        Dim subPropertyCode = $"{code}.{prop.Name}"
+                                        Dim subPropertyValue = prop.Value.ToString()
+                                        Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
+                                        Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
+
+                                        allLogs.Add(New DeviceLog With {
+                                            .EventTime = dt,
+                                            .Code = subPropertyCode,
+                                            .Value = subPropertyValue,
+                                            .EventType = eventType,
+                                            .Description = description
+                                        })
+                                    Next
+
+                                    ' On garde aussi le log parent pour compatibilité
+                                    Dim parentEventType = DetermineEventType(code, value)
+                                    Dim parentDescription = CreateEventDescription(code, value, parentEventType)
+
+                                    allLogs.Add(New DeviceLog With {
+                                        .EventTime = dt,
+                                        .Code = code,
+                                        .Value = value,
+                                        .EventType = parentEventType,
+                                        .Description = parentDescription
+                                    })
+                                Catch ex As Exception
+                                    ' Si l'explosion échoue, traiter comme un log normal
+                                    Dim eventType = DetermineEventType(code, value)
+                                    Dim description = CreateEventDescription(code, value, eventType)
+
+                                    allLogs.Add(New DeviceLog With {
+                                        .EventTime = dt,
+                                        .Code = code,
+                                        .Value = value,
+                                        .EventType = eventType,
+                                        .Description = description
+                                    })
+                                End Try
+                            Else
+                                ' Valeur non-JSON, traiter normalement
+                                Dim eventType = DetermineEventType(code, value)
+                                Dim description = CreateEventDescription(code, value, eventType)
+
+                                allLogs.Add(New DeviceLog With {
+                                    .EventTime = dt,
+                                    .Code = code,
+                                    .Value = value,
+                                    .EventType = eventType,
+                                    .Description = description
+                                })
+                            End If
                         End If
                 Next
             Else
@@ -846,16 +895,65 @@ Public Class TuyaHistoryService
 
                             If timestamp.HasValue Then
                                 Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
-                                Dim eventType = DetermineEventType(code, value)
-                                Dim description = CreateEventDescription(code, value, eventType)
 
-                                allLogs.Add(New DeviceLog With {
-                                    .EventTime = dt,
-                                    .Code = code,
-                                    .Value = value,
-                                    .EventType = eventType,
-                                    .Description = description
-                                })
+                                ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
+                                If IsJsonValue(value) Then
+                                    Try
+                                        Dim jsonObj = JObject.Parse(value)
+
+                                        ' Créer un log pour chaque sous-propriété
+                                        For Each prop In jsonObj.Properties()
+                                            Dim subPropertyCode = $"{code}.{prop.Name}"
+                                            Dim subPropertyValue = prop.Value.ToString()
+                                            Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
+                                            Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
+
+                                            allLogs.Add(New DeviceLog With {
+                                                .EventTime = dt,
+                                                .Code = subPropertyCode,
+                                                .Value = subPropertyValue,
+                                                .EventType = eventType,
+                                                .Description = description
+                                            })
+                                        Next
+
+                                        ' On garde aussi le log parent pour compatibilité
+                                        Dim parentEventType = DetermineEventType(code, value)
+                                        Dim parentDescription = CreateEventDescription(code, value, parentEventType)
+
+                                        allLogs.Add(New DeviceLog With {
+                                            .EventTime = dt,
+                                            .Code = code,
+                                            .Value = value,
+                                            .EventType = parentEventType,
+                                            .Description = parentDescription
+                                        })
+                                    Catch ex As Exception
+                                        ' Si l'explosion échoue, traiter comme un log normal
+                                        Dim eventType = DetermineEventType(code, value)
+                                        Dim description = CreateEventDescription(code, value, eventType)
+
+                                        allLogs.Add(New DeviceLog With {
+                                            .EventTime = dt,
+                                            .Code = code,
+                                            .Value = value,
+                                            .EventType = eventType,
+                                            .Description = description
+                                        })
+                                    End Try
+                                Else
+                                    ' Valeur non-JSON, traiter normalement
+                                    Dim eventType = DetermineEventType(code, value)
+                                    Dim description = CreateEventDescription(code, value, eventType)
+
+                                    allLogs.Add(New DeviceLog With {
+                                        .EventTime = dt,
+                                        .Code = code,
+                                        .Value = value,
+                                        .EventType = eventType,
+                                        .Description = description
+                                    })
+                                End If
                             End If
                         Next
                     End If
@@ -1013,8 +1111,78 @@ Public Class TuyaHistoryService
 
     ''' <summary>
     ''' Crée une description lisible
+    ''' ✅ MODIFIÉ: Gère les sous-propriétés explosées (ex: phase_a.power)
     ''' </summary>
     Private Function CreateEventDescription(code As String, value As String, eventType As String) As String
+        ' ✅ NOUVEAU: Gérer les sous-propriétés explosées
+        If code.Contains(".") Then
+            Dim parts = code.Split("."c)
+            Dim parentCode = parts(0).ToLower()
+            Dim subProperty = parts(1).ToLower()
+
+            ' Déterminer l'icône et le nom du parent
+            Dim parentIcon As String = "📊"
+            Dim parentName As String = parentCode.ToUpper()
+
+            If parentCode.Contains("phase") Then
+                parentIcon = "⚡"
+                parentName = parentCode.Replace("_", " ").ToUpper()
+            End If
+
+            ' Déterminer le nom et l'unité de la sous-propriété
+            Dim propertyName As String
+            Dim unit As String = ""
+
+            Select Case subProperty
+                Case "power"
+                    propertyName = "Puissance"
+                    unit = " W"
+                Case "voltage"
+                    propertyName = "Tension"
+                    unit = " V"
+                Case "electriccurrent", "current"
+                    propertyName = "Courant"
+                    ' Convertir en mA pour l'affichage
+                    Dim valDouble As Double
+                    If Double.TryParse(value, Globalization.NumberStyles.Any, Globalization.CultureInfo.InvariantCulture, valDouble) Then
+                        value = (valDouble / 1000.0).ToString("F2")
+                        unit = " A"
+                    Else
+                        unit = " mA"
+                    End If
+                Case "temperature"
+                    propertyName = "Température"
+                    unit = " °C"
+                Case "humidity"
+                    propertyName = "Humidité"
+                    unit = " %"
+                Case Else
+                    propertyName = subProperty
+            End Select
+
+            ' Formater la valeur si c'est un nombre
+            Dim formattedValue As String = value
+            If unit <> " mA" Then ' Déjà formaté pour le courant
+                Dim valDouble As Double
+                If Double.TryParse(value, Globalization.NumberStyles.Any, Globalization.CultureInfo.InvariantCulture, valDouble) Then
+                    ' Appliquer les conversions selon la propriété
+                    Select Case subProperty
+                        Case "power"
+                            formattedValue = (valDouble / 10.0).ToString("F1")
+                        Case "voltage"
+                            formattedValue = (valDouble / 10.0).ToString("F1")
+                        Case "temperature"
+                            formattedValue = (valDouble / 10.0).ToString("F1")
+                        Case Else
+                            formattedValue = valDouble.ToString("F1")
+                    End Select
+                End If
+            End If
+
+            Return $"{parentIcon} {parentName} - {propertyName}: {formattedValue}{unit}"
+        End If
+
+        ' Gestion standard des types d'événements
         Select Case eventType
             Case "switch_on"
                 Return "🟢 Allumé"
