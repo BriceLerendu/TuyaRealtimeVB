@@ -89,6 +89,74 @@ Public Class TuyaHistoryService
     End Function
 
     ''' <summary>
+    ''' Vérifie si un code est un code de phase (phase_a, phase_b, phase_c)
+    ''' </summary>
+    Private Function IsPhaseCode(code As String) As Boolean
+        If String.IsNullOrWhiteSpace(code) Then Return False
+        Dim codeLower = code.ToLower()
+        Return codeLower = "phase_a" OrElse codeLower = "phase_b" OrElse codeLower = "phase_c"
+    End Function
+
+    ''' <summary>
+    ''' Décode une valeur base64 de phase et retourne les sous-propriétés
+    ''' Retourne Nothing si le décodage échoue
+    ''' </summary>
+    Private Function DecodePhaseBase64(phase As String, base64Data As String) As Dictionary(Of String, String)
+        Try
+            Dim bytes = Convert.FromBase64String(base64Data)
+
+            ' Décoder selon la longueur
+            If bytes.Length >= 8 Then
+                Return DecodePhase8Bytes(phase, bytes)
+            ElseIf bytes.Length >= 6 Then
+                Return DecodePhase6Bytes(phase, bytes)
+            Else
+                Log($"      ⚠️ Longueur de données insuffisante: {bytes.Length} bytes")
+                Return Nothing
+            End If
+        Catch ex As Exception
+            Log($"      ⚠️ Erreur décodage base64 pour {phase}: {ex.Message}")
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Décode 8 bytes de données de phase
+    ''' </summary>
+    Private Function DecodePhase8Bytes(phase As String, bytes As Byte()) As Dictionary(Of String, String)
+        Dim voltage = (CInt(bytes(0)) << 8) Or bytes(1)
+        Dim current = (CInt(bytes(2)) << 8) Or bytes(3)
+        Dim power = bytes(4)
+
+        Return New Dictionary(Of String, String) From {
+            {$"{phase}.voltage", (voltage / 10.0).ToString("F1", Globalization.CultureInfo.InvariantCulture)},
+            {$"{phase}.electricCurrent", (current / 1000.0).ToString("F3", Globalization.CultureInfo.InvariantCulture)},
+            {$"{phase}.power", power.ToString()}
+        }
+    End Function
+
+    ''' <summary>
+    ''' Décode 6 bytes de données de phase
+    ''' </summary>
+    Private Function DecodePhase6Bytes(phase As String, bytes As Byte()) As Dictionary(Of String, String)
+        Dim voltage = (CInt(bytes(0)) << 8) Or bytes(1)
+        Dim current = (CInt(bytes(2)) << 8) Or bytes(3)
+        Dim power = (CInt(bytes(4)) << 8) Or bytes(5)
+
+        ' Valider les valeurs
+        If voltage >= 2000 AndAlso voltage <= 2500 Then
+            Return New Dictionary(Of String, String) From {
+                {$"{phase}.voltage", (voltage / 10.0).ToString("F1", Globalization.CultureInfo.InvariantCulture)},
+                {$"{phase}.electricCurrent", (current / 1000.0).ToString("F3", Globalization.CultureInfo.InvariantCulture)},
+                {$"{phase}.power", power.ToString()}
+            }
+        Else
+            Log($"      ⚠️ Valeurs hors plage pour {phase}: V={voltage}")
+            Return Nothing
+        End If
+    End Function
+
+    ''' <summary>
     ''' Récupère les statistiques d'un appareil avec cache et stratégie multi-codes intelligente
     ''' OPTIMISÉ: Arrêt dès qu'on trouve des données, cache local, limitation des appels API
     ''' </summary>
@@ -815,8 +883,43 @@ Public Class TuyaHistoryService
                                         .Description = description
                                     })
                                 End Try
+                            ElseIf IsPhaseCode(code) AndAlso Not String.IsNullOrWhiteSpace(value) Then
+                                ' ✅ NOUVEAU: Détecter et décoder les données phase en base64
+                                Dim decodedPhaseData = DecodePhaseBase64(code, value)
+
+                                If decodedPhaseData IsNot Nothing AndAlso decodedPhaseData.Count > 0 Then
+                                    ' Créer un log pour chaque sous-propriété décodée
+                                    For Each kvp In decodedPhaseData
+                                        Dim subPropertyCode = kvp.Key
+                                        Dim subPropertyValue = kvp.Value
+                                        Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
+                                        Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
+
+                                        allLogs.Add(New DeviceLog With {
+                                            .EventTime = dt,
+                                            .Code = subPropertyCode,
+                                            .Value = subPropertyValue,
+                                            .EventType = eventType,
+                                            .Description = description
+                                        })
+                                    Next
+
+                                    Log($"      ✅ Décodé {code} → {decodedPhaseData.Count} sous-propriétés")
+                                Else
+                                    ' Si le décodage échoue, traiter comme un log normal
+                                    Dim eventType = DetermineEventType(code, value)
+                                    Dim description = CreateEventDescription(code, value, eventType)
+
+                                    allLogs.Add(New DeviceLog With {
+                                        .EventTime = dt,
+                                        .Code = code,
+                                        .Value = value,
+                                        .EventType = eventType,
+                                        .Description = description
+                                    })
+                                End If
                             Else
-                                ' Valeur non-JSON, traiter normalement
+                                ' Valeur non-JSON et non-phase, traiter normalement
                                 Dim eventType = DetermineEventType(code, value)
                                 Dim description = CreateEventDescription(code, value, eventType)
 
@@ -935,8 +1038,43 @@ Public Class TuyaHistoryService
                                             .Description = description
                                         })
                                     End Try
+                                ElseIf IsPhaseCode(code) AndAlso Not String.IsNullOrWhiteSpace(value) Then
+                                    ' ✅ NOUVEAU: Détecter et décoder les données phase en base64
+                                    Dim decodedPhaseData = DecodePhaseBase64(code, value)
+
+                                    If decodedPhaseData IsNot Nothing AndAlso decodedPhaseData.Count > 0 Then
+                                        ' Créer un log pour chaque sous-propriété décodée
+                                        For Each kvp In decodedPhaseData
+                                            Dim subPropertyCode = kvp.Key
+                                            Dim subPropertyValue = kvp.Value
+                                            Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
+                                            Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
+
+                                            allLogs.Add(New DeviceLog With {
+                                                .EventTime = dt,
+                                                .Code = subPropertyCode,
+                                                .Value = subPropertyValue,
+                                                .EventType = eventType,
+                                                .Description = description
+                                            })
+                                        Next
+
+                                        Log($"      ✅ Décodé {code} → {decodedPhaseData.Count} sous-propriétés")
+                                    Else
+                                        ' Si le décodage échoue, traiter comme un log normal
+                                        Dim eventType = DetermineEventType(code, value)
+                                        Dim description = CreateEventDescription(code, value, eventType)
+
+                                        allLogs.Add(New DeviceLog With {
+                                            .EventTime = dt,
+                                            .Code = code,
+                                            .Value = value,
+                                            .EventType = eventType,
+                                            .Description = description
+                                        })
+                                    End If
                                 Else
-                                    ' Valeur non-JSON, traiter normalement
+                                    ' Valeur non-JSON et non-phase, traiter normalement
                                     Dim eventType = DetermineEventType(code, value)
                                     Dim description = CreateEventDescription(code, value, eventType)
 
