@@ -151,9 +151,9 @@ Public Class LRUCache(Of TKey, TValue)
         Get
             SyncLock _lockObject
                 Return _cache.Count
-            End Get
-        End Property
-    End ReadOnly
+            End SyncLock
+        End Get
+    End Property
 
     ''' <summary>
     ''' Retourne le taux de hit (hits / (hits + misses))
@@ -164,9 +164,9 @@ Public Class LRUCache(Of TKey, TValue)
                 Dim total = _hits + _misses
                 If total = 0 Then Return 0
                 Return CDbl(_hits) / total
-            End Get
-        End Property
-    End ReadOnly
+            End SyncLock
+        End Get
+    End Property
 
     ''' <summary>
     ''' Retourne le nombre de hits
@@ -175,9 +175,9 @@ Public Class LRUCache(Of TKey, TValue)
         Get
             SyncLock _lockObject
                 Return _hits
-            End Get
-        End Property
-    End ReadOnly
+            End SyncLock
+        End Get
+    End Property
 
     ''' <summary>
     ''' Retourne le nombre de misses
@@ -186,9 +186,9 @@ Public Class LRUCache(Of TKey, TValue)
         Get
             SyncLock _lockObject
                 Return _misses
-            End Get
-        End Property
-    End ReadOnly
+            End SyncLock
+        End Get
+    End Property
 
     ''' <summary>
     ''' Réinitialise les métriques

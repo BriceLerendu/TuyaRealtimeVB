@@ -27,7 +27,8 @@ Public Class TuyaApiClient
     Private ReadOnly _logCallback As Action(Of String)
 
     ' ✅ PHASE 6 - Cache API avec LRU et métriques de performance
-    Private Const STATUS_CACHE_SIZE As Integer = 500  ' Max 500 appareils en cache
+    ' Dimensionné pour 380+ appareils avec marge de 30%
+    Private Const STATUS_CACHE_SIZE As Integer = 500  ' Max 500 appareils en cache (380 + marge)
     Private Const DEVICE_INFO_CACHE_SIZE As Integer = 1000  ' Max 1000 infos en cache
     Private Const STATUS_CACHE_TTL_SECONDS As Integer = 30  ' TTL pour status
     Private Const DEVICE_INFO_CACHE_TTL_SECONDS As Integer = 300  ' TTL pour device info (5 min)

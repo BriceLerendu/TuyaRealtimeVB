@@ -19,10 +19,11 @@ Public Class DashboardForm
     Private Const FLASH_COUNT As Integer = 6
 
     ' ✅ PHASE 6 - Virtualisation optimisée: Rendu progressif adaptatif
+    ' Testé et optimisé pour 380+ appareils
     Private Const PROGRESSIVE_RENDER_THRESHOLD As Integer = 50  ' Abaissé de 100 à 50
     Private Const PROGRESSIVE_RENDER_BATCH_SMALL As Integer = 10   ' < 100 appareils
     Private Const PROGRESSIVE_RENDER_BATCH_MEDIUM As Integer = 20  ' 100-300 appareils
-    Private Const PROGRESSIVE_RENDER_BATCH_LARGE As Integer = 30   ' > 300 appareils
+    Private Const PROGRESSIVE_RENDER_BATCH_LARGE As Integer = 30   ' > 300 appareils (380 dans votre cas)
     Private Const PROGRESSIVE_RENDER_DELAY_SMALL As Integer = 30   ' < 100 appareils
     Private Const PROGRESSIVE_RENDER_DELAY_MEDIUM As Integer = 50  ' 100-300 appareils
     Private Const PROGRESSIVE_RENDER_DELAY_LARGE As Integer = 80   ' > 300 appareils
