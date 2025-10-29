@@ -18,9 +18,14 @@ Public Class DashboardForm
     Private Const FLASH_TIMER_INTERVAL As Integer = 300
     Private Const FLASH_COUNT As Integer = 6
 
-    ' ✅ PHASE 5 - Virtualisation: Rendu progressif pour 500+ appareils
-    Private Const PROGRESSIVE_RENDER_BATCH_SIZE As Integer = 20
-    Private Const PROGRESSIVE_RENDER_DELAY_MS As Integer = 50
+    ' ✅ PHASE 6 - Virtualisation optimisée: Rendu progressif adaptatif
+    Private Const PROGRESSIVE_RENDER_THRESHOLD As Integer = 50  ' Abaissé de 100 à 50
+    Private Const PROGRESSIVE_RENDER_BATCH_SMALL As Integer = 10   ' < 100 appareils
+    Private Const PROGRESSIVE_RENDER_BATCH_MEDIUM As Integer = 20  ' 100-300 appareils
+    Private Const PROGRESSIVE_RENDER_BATCH_LARGE As Integer = 30   ' > 300 appareils
+    Private Const PROGRESSIVE_RENDER_DELAY_SMALL As Integer = 30   ' < 100 appareils
+    Private Const PROGRESSIVE_RENDER_DELAY_MEDIUM As Integer = 50  ' 100-300 appareils
+    Private Const PROGRESSIVE_RENDER_DELAY_LARGE As Integer = 80   ' > 300 appareils
 
     ' Couleurs thématiques
     Private Shared ReadOnly DarkBg As Color = Color.FromArgb(45, 45, 48)
@@ -783,8 +788,8 @@ Public Class DashboardForm
             ' Récupérer tous les device IDs
             Dim allDeviceIds = _deviceCards.Keys.ToList()
 
-            ' Diviser en batches de 20 (limite API Tuya)
-            Dim batchSize = 20
+            ' ✅ PHASE 6 - Augmentation batch size de 20 à 50 pour réduire le nombre d'appels API
+            Dim batchSize = 50
             Dim batchCount = CInt(Math.Ceiling(allDeviceIds.Count / CDbl(batchSize)))
             Dim processedCount = 0
 
@@ -1140,9 +1145,9 @@ Public Class DashboardForm
             Dim devicesByRoom = GroupDevicesByRoom(filteredDevices).ToList()
             Dim totalDevices = filteredDevices.Count
 
-            ' ✅ PHASE 5 - Utiliser rendu progressif si > 100 appareils
-            If totalDevices > 100 Then
-                LogDebug($"🔄 Rendu progressif activé pour {totalDevices} appareils...")
+            ' ✅ PHASE 6 - Rendu progressif adaptatif activé dès 50 appareils
+            If totalDevices >= PROGRESSIVE_RENDER_THRESHOLD Then
+                LogDebug($"🔄 Rendu progressif adaptatif activé pour {totalDevices} appareils...")
                 Await DisplayDevicesByRoomProgressiveAsync(devicesByRoom, _progressiveRenderCancellation.Token)
             Else
                 ' Rendu classique pour petit nombre d'appareils
@@ -1160,7 +1165,8 @@ Public Class DashboardForm
     End Function
 
     ''' <summary>
-    ''' ✅ PHASE 5 - Rendu progressif par lots pour éviter de bloquer l'UI
+    ''' ✅ PHASE 6 - Rendu progressif adaptatif par lots pour éviter de bloquer l'UI
+    ''' Ajuste automatiquement la taille des lots et les délais selon le nombre d'appareils
     ''' </summary>
     Private Async Function DisplayDevicesByRoomProgressiveAsync(
         devicesByRoom As List(Of IGrouping(Of String, DeviceInfo)),
@@ -1172,6 +1178,23 @@ Public Class DashboardForm
             Dim totalDevices = devicesByRoom.Sum(Function(g) g.Count())
             Dim processedDevices = 0
 
+            ' ✅ PHASE 6 - Paramètres adaptatifs selon le nombre d'appareils
+            Dim batchSize As Integer
+            Dim delayMs As Integer
+            If totalDevices < 100 Then
+                batchSize = PROGRESSIVE_RENDER_BATCH_SMALL
+                delayMs = PROGRESSIVE_RENDER_DELAY_SMALL
+                LogDebug($"  Mode RAPIDE : batch={batchSize}, délai={delayMs}ms")
+            ElseIf totalDevices < 300 Then
+                batchSize = PROGRESSIVE_RENDER_BATCH_MEDIUM
+                delayMs = PROGRESSIVE_RENDER_DELAY_MEDIUM
+                LogDebug($"  Mode MOYEN : batch={batchSize}, délai={delayMs}ms")
+            Else
+                batchSize = PROGRESSIVE_RENDER_BATCH_LARGE
+                delayMs = PROGRESSIVE_RENDER_DELAY_LARGE
+                LogDebug($"  Mode LARGE : batch={batchSize}, délai={delayMs}ms")
+            End If
+
             For Each roomGroup In devicesByRoom
                 If cancellationToken.IsCancellationRequested Then Exit For
 
@@ -1182,12 +1205,12 @@ Public Class DashboardForm
                     CreateRoomHeader(roomGroup.Key, roomGroup.Count())
                 End If
 
-                ' Ajouter les appareils par lots
+                ' Ajouter les appareils par lots (taille adaptative)
                 Dim devices = roomGroup.OrderBy(Function(d) d.Name).ToList()
-                For batchStart = 0 To devices.Count - 1 Step PROGRESSIVE_RENDER_BATCH_SIZE
+                For batchStart = 0 To devices.Count - 1 Step batchSize
                     If cancellationToken.IsCancellationRequested Then Exit For
 
-                    Dim batchEnd = Math.Min(batchStart + PROGRESSIVE_RENDER_BATCH_SIZE - 1, devices.Count - 1)
+                    Dim batchEnd = Math.Min(batchStart + batchSize - 1, devices.Count - 1)
 
                     If InvokeRequired Then
                         Invoke(Sub()
@@ -1218,8 +1241,8 @@ Public Class DashboardForm
                     processedDevices += (batchEnd - batchStart + 1)
                     UpdateStatus($"Chargement des appareils... {processedDevices}/{totalDevices}")
 
-                    ' Délai pour ne pas bloquer l'UI
-                    Await Task.Delay(PROGRESSIVE_RENDER_DELAY_MS, cancellationToken)
+                    ' Délai adaptatif pour ne pas bloquer l'UI
+                    Await Task.Delay(delayMs, cancellationToken)
                 Next
             Next
 

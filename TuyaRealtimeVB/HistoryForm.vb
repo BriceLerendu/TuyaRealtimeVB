@@ -27,6 +27,13 @@ Public Class HistoryForm
     Private _availableCodes As List(Of String)
     Private _selectedCode As String = Nothing
 
+    ' ✅ PHASE 6 - Cache des données de graphique pour éviter recalculs
+    Private _cachedStats As DeviceStatistics = Nothing
+    Private _cachedLogs As List(Of DeviceLogEntry) = Nothing
+    Private _cacheTimestamp As DateTime = DateTime.MinValue
+    Private Const CHART_CACHE_DURATION_MINUTES As Integer = 5
+    Private Const MAX_CHART_DATAPOINTS As Integer = 1000  ' Downsampling si plus de 1000 points
+
     Public Sub New(deviceId As String, deviceName As String, historyService As TuyaHistoryService)
         _deviceId = deviceId
         _deviceName = deviceName
@@ -308,9 +315,16 @@ Public Class HistoryForm
         End If
 
         Try
-            ' Extraire données
-            Dim timestamps = stats.DataPoints.Select(Function(p) p.Timestamp.ToOADate()).ToArray()
-            Dim values = stats.DataPoints.Select(Function(p) p.Value).ToArray()
+            ' ✅ PHASE 6 - Downsampling intelligent si trop de points
+            Dim downsampledPoints = stats.DataPoints
+            If stats.DataPoints.Count > MAX_CHART_DATAPOINTS Then
+                downsampledPoints = DownsampleLTTB(stats.DataPoints, MAX_CHART_DATAPOINTS)
+                Debug.WriteLine($"📊 Downsampling: {stats.DataPoints.Count} -> {downsampledPoints.Count} points")
+            End If
+
+            ' Extraire données (après downsampling)
+            Dim timestamps = downsampledPoints.Select(Function(p) p.Timestamp.ToOADate()).ToArray()
+            Dim values = downsampledPoints.Select(Function(p) p.Value).ToArray()
 
             ' Vérification supplémentaire
             If timestamps.Length = 0 OrElse values.Length = 0 Then
@@ -956,20 +970,23 @@ Public Class HistoryForm
     End Sub
 
     Private Sub DisplayLogs(logs As List(Of DeviceLog))
-        _logsListView.Items.Clear()
+        ' ✅ PHASE 6 - Optimisation: SuspendLayout pour améliorer les performances
+        _logsListView.BeginUpdate()
+        Try
+            _logsListView.Items.Clear()
 
-        If logs Is Nothing OrElse logs.Count = 0 Then
-            Dim item As New ListViewItem("Aucun événement")
-            item.SubItems.Add("")
-            item.ForeColor = WinColor.Gray
-            _logsListView.Items.Add(item)
-            Return
-        End If
+            If logs Is Nothing OrElse logs.Count = 0 Then
+                Dim item As New ListViewItem("Aucun événement")
+                item.SubItems.Add("")
+                item.ForeColor = WinColor.Gray
+                _logsListView.Items.Add(item)
+                Return
+            End If
 
-        ' ✅ CORRECTION: Trier les logs par ordre chronologique (du plus récent au plus ancien pour la liste)
-        Dim sortedLogs = logs.OrderByDescending(Function(l) l.EventTime).ToList()
+            ' ✅ CORRECTION: Trier les logs par ordre chronologique (du plus récent au plus ancien pour la liste)
+            Dim sortedLogs = logs.OrderByDescending(Function(l) l.EventTime).ToList()
 
-        For Each log In sortedLogs
+            For Each log In sortedLogs
             Dim item As New ListViewItem(log.EventTime.ToString("dd/MM/yyyy HH:mm:ss"))
             item.SubItems.Add(log.Description)
 
@@ -999,8 +1016,11 @@ Public Class HistoryForm
                 item.ForeColor = Color.FromArgb(28, 28, 30)
             End If
 
-            _logsListView.Items.Add(item)
-        Next
+                _logsListView.Items.Add(item)
+            Next
+        Finally
+            _logsListView.EndUpdate()
+        End Try
     End Sub
 
     Private Sub PeriodComboBox_SelectedIndexChanged(sender As Object, e As EventArgs)
@@ -1061,4 +1081,74 @@ Public Class HistoryForm
         _selectedCode = Nothing
         LoadHistoryAsync()
     End Sub
+
+    ''' <summary>
+    ''' ✅ PHASE 6 - Downsampling intelligent utilisant l'algorithme LTTB (Largest Triangle Three Buckets)
+    ''' Réduit le nombre de points en préservant les variations significatives
+    ''' Référence: https://github.com/sveinn-steinarsson/flot-downsample
+    ''' </summary>
+    Private Function DownsampleLTTB(data As List(Of DataPoint), threshold As Integer) As List(Of DataPoint)
+        If data Is Nothing OrElse data.Count <= threshold Then
+            Return data
+        End If
+
+        Dim sampled As New List(Of DataPoint)
+        Dim bucketSize = CDbl(data.Count - 2) / (threshold - 2)
+
+        ' Toujours garder le premier point
+        sampled.Add(data(0))
+
+        Dim bucketIndex = 0
+        For i As Integer = 0 To threshold - 3
+            ' Calculer la moyenne du bucket suivant
+            Dim avgRangeStart = CInt(Math.Floor((i + 1) * bucketSize)) + 1
+            Dim avgRangeEnd = CInt(Math.Floor((i + 2) * bucketSize)) + 1
+            If avgRangeEnd >= data.Count Then
+                avgRangeEnd = data.Count - 1
+            End If
+
+            Dim avgTime As Double = 0
+            Dim avgValue As Double = 0
+            Dim avgRangeLength = avgRangeEnd - avgRangeStart
+
+            For j As Integer = avgRangeStart To avgRangeEnd - 1
+                avgTime += data(j).Timestamp.ToOADate()
+                avgValue += data(j).Value
+            Next
+            avgTime /= avgRangeLength
+            avgValue /= avgRangeLength
+
+            ' Trouver le point avec la plus grande aire de triangle
+            Dim rangeStart = CInt(Math.Floor(i * bucketSize)) + 1
+            Dim rangeEnd = CInt(Math.Floor((i + 1) * bucketSize)) + 1
+
+            Dim pointATime = sampled(sampled.Count - 1).Timestamp.ToOADate()
+            Dim pointAValue = sampled(sampled.Count - 1).Value
+
+            Dim maxArea As Double = -1
+            Dim maxAreaPoint As DataPoint = Nothing
+
+            For j As Integer = rangeStart To rangeEnd - 1
+                If j < data.Count Then
+                    ' Calculer l'aire du triangle
+                    Dim area = Math.Abs((pointATime - avgTime) * (data(j).Value - pointAValue) -
+                                       (pointATime - data(j).Timestamp.ToOADate()) * (avgValue - pointAValue)) * 0.5
+
+                    If area > maxArea Then
+                        maxArea = area
+                        maxAreaPoint = data(j)
+                    End If
+                End If
+            Next
+
+            If maxAreaPoint IsNot Nothing Then
+                sampled.Add(maxAreaPoint)
+            End If
+        Next
+
+        ' Toujours garder le dernier point
+        sampled.Add(data(data.Count - 1))
+
+        Return sampled
+    End Function
 End Class

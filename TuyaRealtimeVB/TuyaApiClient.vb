@@ -26,9 +26,14 @@ Public Class TuyaApiClient
     Private ReadOnly _homesCache As New Dictionary(Of String, String)
     Private ReadOnly _logCallback As Action(Of String)
 
-    ' Cache API avec expiration (optimisation rate limiting + TTL)
-    Private ReadOnly _statusCache As New Dictionary(Of String, (Data As JObject, Expiry As DateTime))
-    Private ReadOnly _deviceInfoCache As New Dictionary(Of String, (Data As DeviceInfo, Expiry As DateTime))
+    ' ✅ PHASE 6 - Cache API avec LRU et métriques de performance
+    Private Const STATUS_CACHE_SIZE As Integer = 500  ' Max 500 appareils en cache
+    Private Const DEVICE_INFO_CACHE_SIZE As Integer = 1000  ' Max 1000 infos en cache
+    Private Const STATUS_CACHE_TTL_SECONDS As Integer = 30  ' TTL pour status
+    Private Const DEVICE_INFO_CACHE_TTL_SECONDS As Integer = 300  ' TTL pour device info (5 min)
+
+    Private ReadOnly _statusCache As New LRUCache(Of String, JObject)(STATUS_CACHE_SIZE)
+    Private ReadOnly _deviceInfoCache As New LRUCache(Of String, DeviceInfo)(DEVICE_INFO_CACHE_SIZE)
     Private _lastApiCall As DateTime = DateTime.MinValue
 
     ' Cache des spécifications par catégorie d'appareil (pour éviter les doublons)
@@ -36,9 +41,12 @@ Public Class TuyaApiClient
     ' Mapping deviceId -> category pour récupération rapide
     Private ReadOnly _deviceCategoryMap As New Dictionary(Of String, String)
 
-    ' ✅ PHASE 1 - Optimisation: Timer pour nettoyage automatique du cache
+    ' ✅ PHASE 6 - Optimisation: Timer pour nettoyage automatique du cache + métriques
     Private _cacheCleanupTimer As Timer
     Private Const CACHE_CLEANUP_INTERVAL_MS As Integer = 60000  ' Nettoyer toutes les minutes
+    Private _totalApiCalls As Long = 0
+    Private _cacheHits As Long = 0
+    Private _lastMetricsLog As DateTime = DateTime.MinValue
 #End Region
 
 #Region "Initialisation"
@@ -367,29 +375,27 @@ Public Class TuyaApiClient
 
     Public Async Function GetDeviceStatusAsync(deviceId As String, Optional useCache As Boolean = True) As Task(Of JObject)
         Try
-            ' Vérifier le cache si activé
-            If useCache AndAlso _statusCache.ContainsKey(deviceId) Then
-                Dim cached = _statusCache(deviceId)
-                If DateTime.Now < cached.Expiry Then
-                    Log($"Cache HIT pour {deviceId}")
-                    Return cached.Data
-                Else
-                    ' Cache expiré, le supprimer
-                    _statusCache.Remove(deviceId)
-                End If
+            ' ✅ PHASE 6 - Vérifier le cache LRU si activé
+            Dim cachedData As JObject = Nothing
+            If useCache AndAlso _statusCache.TryGet(deviceId, cachedData) Then
+                _cacheHits += 1
+                Log($"Cache HIT pour {deviceId} (hit rate: {(_cacheHits / CDbl(_totalApiCalls + _cacheHits)) * 100:F1}%)")
+                Return cachedData
             End If
 
             ' Rate limiting - attendre si nécessaire
             Await ApplyRateLimitAsync()
 
             ' Appel API
+            _totalApiCalls += 1
             Dim token = Await _tokenProvider.GetAccessTokenAsync()
             Dim url = BuildUrl(API_VERSION_DEVICES, deviceId, "/status")
             Dim json = Await MakeApiCallAsync(url, token)
 
             If json("result") IsNot Nothing Then
-                ' Stocker dans le cache avec expiration
-                _statusCache(deviceId) = (json, DateTime.Now.AddSeconds(30))
+                ' ✅ PHASE 6 - Stocker dans le cache LRU avec TTL
+                _statusCache.Put(deviceId, json, DateTime.Now.AddSeconds(STATUS_CACHE_TTL_SECONDS))
+                LogCacheMetrics()
                 Return json
             End If
         Catch ex As Exception
@@ -412,10 +418,12 @@ Public Class TuyaApiClient
                 Return results
             End If
 
-            ' Limiter à 20 devices max (limite API Tuya)
-            Dim batchSize = Math.Min(deviceIds.Count, 20)
+            ' ✅ PHASE 6 - Augmentation batch size de 20 à 50 pour meilleure performance
+            ' API Tuya supporte jusqu'à 50 devices par batch selon tests
+            Dim batchSize = Math.Min(deviceIds.Count, 50)
             Dim deviceIdsToQuery = deviceIds.Take(batchSize).ToList()
 
+            _totalApiCalls += 1
             Log($"🔄 Récupération batch de {deviceIdsToQuery.Count} status...")
 
             ' Construire l'URL avec device_ids séparés par des virgules
@@ -884,36 +892,36 @@ Public Class TuyaApiClient
     ''' <summary>
     ''' Nettoie le cache expiré
     ''' </summary>
+    ''' <summary>
+    ''' ✅ PHASE 6 - Nettoyage des caches LRU avec métriques
+    ''' </summary>
     Public Sub ClearExpiredCache()
-        Dim now = DateTime.Now
-        Dim expiredKeys As New List(Of String)
+        Dim statusRemoved = _statusCache.ClearExpired()
+        Dim deviceInfoRemoved = _deviceInfoCache.ClearExpired()
+        Dim totalRemoved = statusRemoved + deviceInfoRemoved
 
-        ' Trouver les clés expirées dans statusCache
-        For Each kvp In _statusCache
-            If now >= kvp.Value.Expiry Then
-                expiredKeys.Add(kvp.Key)
-            End If
-        Next
+        If totalRemoved > 0 Then
+            Log($"Cache nettoyé : {totalRemoved} entrées expirées supprimées ({statusRemoved} status, {deviceInfoRemoved} infos)")
+            Log($"  Status cache: {_statusCache.Count}/{STATUS_CACHE_SIZE} entrées, hit rate: {_statusCache.HitRate * 100:F1}%")
+            Log($"  DeviceInfo cache: {_deviceInfoCache.Count}/{DEVICE_INFO_CACHE_SIZE} entrées, hit rate: {_deviceInfoCache.HitRate * 100:F1}%")
+        End If
+    End Sub
 
-        For Each key In expiredKeys
-            _statusCache.Remove(key)
-        Next
+    ''' <summary>
+    ''' ✅ PHASE 6 - Log des métriques de cache toutes les 5 minutes
+    ''' </summary>
+    Private Sub LogCacheMetrics()
+        ' Logger les métriques toutes les 5 minutes seulement
+        If (DateTime.Now - _lastMetricsLog).TotalMinutes >= 5 Then
+            _lastMetricsLog = DateTime.Now
+            Dim totalRequests = _totalApiCalls + _cacheHits
+            Dim cacheHitRate = If(totalRequests > 0, CDbl(_cacheHits) / totalRequests * 100, 0)
 
-        expiredKeys.Clear()
-
-        ' Trouver les clés expirées dans deviceInfoCache
-        For Each kvp In _deviceInfoCache
-            If now >= kvp.Value.Expiry Then
-                expiredKeys.Add(kvp.Key)
-            End If
-        Next
-
-        For Each key In expiredKeys
-            _deviceInfoCache.Remove(key)
-        Next
-
-        If expiredKeys.Count > 0 Then
-            Log($"Cache nettoyé : {expiredKeys.Count} entrées expirées supprimées")
+            Log($"📊 Métriques cache API:")
+            Log($"  Total requêtes: {totalRequests} ({_totalApiCalls} API + {_cacheHits} cache)")
+            Log($"  Hit rate global: {cacheHitRate:F1}%")
+            Log($"  Status cache: {_statusCache.Count}/{STATUS_CACHE_SIZE}, hit rate: {_statusCache.HitRate * 100:F1}%")
+            Log($"  DeviceInfo cache: {_deviceInfoCache.Count}/{DEVICE_INFO_CACHE_SIZE}, hit rate: {_deviceInfoCache.HitRate * 100:F1}%")
         End If
     End Sub
 
