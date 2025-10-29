@@ -329,6 +329,38 @@ Public Class DeviceCard
         ' Un seul invalidate pour toutes les mises à jour
         Me.Invalidate()
     End Sub
+
+    ''' <summary>
+    ''' Force le traitement immédiat de toutes les mises à jour en attente
+    ''' Utile après le chargement initial pour s'assurer que toutes les propriétés sont affichées
+    ''' </summary>
+    Public Sub FlushPendingUpdates()
+        If Me.InvokeRequired Then
+            Me.Invoke(Sub() FlushPendingUpdates())
+            Return
+        End If
+
+        ' Arrêter le timer de debounce
+        _updateTimer?.Stop()
+
+        SyncLock _lockObject
+            Try
+                If _pendingUpdates.Count > 0 Then
+                    ' Appliquer toutes les mises à jour en attente immédiatement
+                    For Each kvp In _pendingUpdates
+                        UpdatePropertyInternal(kvp.Key, kvp.Value)
+                    Next
+                    _pendingUpdates.Clear()
+
+                    ' Forcer un redessin
+                    Me.Invalidate()
+                    Me.Update()
+                End If
+            Catch ex As Exception
+                Debug.WriteLine($"Erreur FlushPendingUpdates: {ex.Message}")
+            End Try
+        End SyncLock
+    End Sub
 #End Region
 
 #Region "Dessin de la carte"

@@ -816,6 +816,17 @@ Public Class DashboardForm
             Next
 
             LogDebug($"✅ États initiaux chargés: {processedCount}/{total} appareils ({batchCount} batchs API)")
+
+            ' ✅ FIX: Forcer l'affichage immédiat de toutes les propriétés en attente
+            ' Le système de debouncing peut empêcher l'affichage des propriétés au démarrage
+            LogDebug("Forçage de l'affichage des propriétés en attente...")
+            Dim flushedCount = 0
+            For Each kvp In _deviceCards.ToList()
+                kvp.Value.FlushPendingUpdates()
+                flushedCount += 1
+            Next
+            LogDebug($"✓ {flushedCount} cartes mises à jour avec leurs propriétés")
+
         Catch ex As Exception
             LogDebug($"ERREUR LoadInitialDeviceStatesAsync: {ex.Message}")
         End Try
