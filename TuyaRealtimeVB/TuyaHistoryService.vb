@@ -32,7 +32,8 @@ Public Class TuyaHistoryService
 
     ''' <summary>
     ''' Récupère la liste de tous les codes DP (data points) disponibles pour un appareil
-    ''' ✅ MODIFIÉ: Explose les propriétés JSON en sous-propriétés
+    ''' ✅ SIMPLIFIÉ: Les logs contiennent déjà les sous-propriétés explosées par GetDeviceLogsV1Async
+    ''' Il suffit de récupérer tous les codes uniques des logs
     ''' </summary>
     Public Async Function GetAvailableCodesAsync(
         deviceId As String,
@@ -41,6 +42,8 @@ Public Class TuyaHistoryService
 
         Try
             ' Récupérer les logs pour analyser les codes disponibles
+            ' Note: GetDeviceLogsAsync() -> GetLogsWithTimeSlicesAsync() -> GetDeviceLogsV1Async()
+            ' qui explose déjà les propriétés JSON en sous-propriétés (ex: phase_a.power, phase_a.voltage)
             Dim logs = Await GetDeviceLogsAsync(deviceId, period)
 
             If logs Is Nothing OrElse logs.Count = 0 Then
@@ -48,47 +51,17 @@ Public Class TuyaHistoryService
                 Return New List(Of String)
             End If
 
-            ' Extraire tous les codes DP uniques des logs
-            Dim parentCodes = logs.Where(Function(l) Not String.IsNullOrEmpty(l.Code)) _
-                                 .Select(Function(l) l.Code) _
-                                 .Distinct() _
-                                 .ToList()
+            ' Extraire tous les codes DP uniques des logs (déjà explosés)
+            Dim allCodes = logs.Where(Function(l) Not String.IsNullOrEmpty(l.Code)) _
+                                .Select(Function(l) l.Code) _
+                                .Distinct() _
+                                .OrderBy(Function(c) c) _
+                                .ToList()
 
-            ' ✅ NOUVEAU: Exploser les propriétés JSON en sous-propriétés
-            Dim allCodes As New HashSet(Of String)
+            Log($"🔍 Codes DP disponibles: {String.Join(", ", allCodes)}")
+            Log($"   Total: {allCodes.Count} codes (incluant sous-propriétés explosées)")
 
-            For Each parentCode In parentCodes
-                ' Ajouter le code parent
-                allCodes.Add(parentCode)
-
-                ' Chercher des valeurs JSON pour ce code
-                Dim logsForCode = logs.Where(Function(l) l.Code = parentCode).Take(5).ToList()
-
-                For Each logEntry In logsForCode
-                    ' Détecter si la valeur est du JSON
-                    If IsJsonValue(logEntry.Value) Then
-                        Try
-                            Dim jsonObj = JObject.Parse(logEntry.Value)
-
-                            ' Ajouter chaque sous-propriété
-                            For Each prop In jsonObj.Properties()
-                                Dim subPropertyCode = $"{parentCode}.{prop.Name}"
-                                allCodes.Add(subPropertyCode)
-                            Next
-
-                            ' Une fois qu'on a trouvé du JSON, pas besoin de continuer
-                            Exit For
-                        Catch ex As Exception
-                            ' Pas du JSON valide, ignorer
-                        End Try
-                    End If
-                Next
-            Next
-
-            Dim sortedCodes = allCodes.OrderBy(Function(c) c).ToList()
-            Log($"🔍 Codes DP disponibles (avec sous-propriétés): {String.Join(", ", sortedCodes)}")
-
-            Return sortedCodes
+            Return allCodes
 
         Catch ex As Exception
             Log($"❌ Exception GetAvailableCodesAsync: {ex.Message}")
