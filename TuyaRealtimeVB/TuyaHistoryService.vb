@@ -32,6 +32,7 @@ Public Class TuyaHistoryService
 
     ''' <summary>
     ''' Récupère la liste de tous les codes DP (data points) disponibles pour un appareil
+    ''' ✅ MODIFIÉ: Explose les propriétés JSON en sous-propriétés
     ''' </summary>
     Public Async Function GetAvailableCodesAsync(
         deviceId As String,
@@ -47,21 +48,62 @@ Public Class TuyaHistoryService
                 Return New List(Of String)
             End If
 
-            ' Extraire tous les codes DP uniques des logs et les trier
-            Dim availableCodes = logs.Where(Function(l) Not String.IsNullOrEmpty(l.Code)) _
-                                    .Select(Function(l) l.Code) _
-                                    .Distinct() _
-                                    .OrderBy(Function(c) c) _
-                                    .ToList()
+            ' Extraire tous les codes DP uniques des logs
+            Dim parentCodes = logs.Where(Function(l) Not String.IsNullOrEmpty(l.Code)) _
+                                 .Select(Function(l) l.Code) _
+                                 .Distinct() _
+                                 .ToList()
 
-            Log($"🔍 Codes DP disponibles: {String.Join(", ", availableCodes)}")
+            ' ✅ NOUVEAU: Exploser les propriétés JSON en sous-propriétés
+            Dim allCodes As New HashSet(Of String)
 
-            Return availableCodes
+            For Each parentCode In parentCodes
+                ' Ajouter le code parent
+                allCodes.Add(parentCode)
+
+                ' Chercher des valeurs JSON pour ce code
+                Dim logsForCode = logs.Where(Function(l) l.Code = parentCode).Take(5).ToList()
+
+                For Each logEntry In logsForCode
+                    ' Détecter si la valeur est du JSON
+                    If IsJsonValue(logEntry.Value) Then
+                        Try
+                            Dim jsonObj = JObject.Parse(logEntry.Value)
+
+                            ' Ajouter chaque sous-propriété
+                            For Each prop In jsonObj.Properties()
+                                Dim subPropertyCode = $"{parentCode}.{prop.Name}"
+                                allCodes.Add(subPropertyCode)
+                            Next
+
+                            ' Une fois qu'on a trouvé du JSON, pas besoin de continuer
+                            Exit For
+                        Catch ex As Exception
+                            ' Pas du JSON valide, ignorer
+                        End Try
+                    End If
+                Next
+            Next
+
+            Dim sortedCodes = allCodes.OrderBy(Function(c) c).ToList()
+            Log($"🔍 Codes DP disponibles (avec sous-propriétés): {String.Join(", ", sortedCodes)}")
+
+            Return sortedCodes
 
         Catch ex As Exception
             Log($"❌ Exception GetAvailableCodesAsync: {ex.Message}")
             Return New List(Of String)
         End Try
+    End Function
+
+    ''' <summary>
+    ''' Vérifie si une valeur est du JSON
+    ''' </summary>
+    Private Function IsJsonValue(value As String) As Boolean
+        If String.IsNullOrWhiteSpace(value) Then Return False
+        Dim trimmed = value.Trim()
+        Return (trimmed.StartsWith("{") AndAlso trimmed.EndsWith("}")) OrElse
+               (trimmed.StartsWith("[") AndAlso trimmed.EndsWith("]"))
     End Function
 
     ''' <summary>
@@ -285,6 +327,7 @@ Public Class TuyaHistoryService
 
     ''' <summary>
     ''' Calcule les statistiques à partir des logs récupérés
+    ''' ✅ MODIFIÉ: Supporte les sous-propriétés explosées (ex: phase_a.power)
     ''' </summary>
     Private Function CalculateStatisticsFromLogs(
         deviceId As String,
@@ -301,8 +344,28 @@ Public Class TuyaHistoryService
                               .ToList()
             Log($"  🔍 Codes DP trouvés dans les logs: {String.Join(", ", allCodes)}")
 
-            ' Filtrer les logs pour le code spécifique
-            Dim relevantLogs = logs.Where(Function(l) l.Code?.ToLower() = code.ToLower()).ToList()
+            ' ✅ NOUVEAU: Détecter si c'est une sous-propriété (ex: phase_a.power)
+            Dim isSubProperty = code.Contains(".")
+            Dim parentCode As String = Nothing
+            Dim subPropertyName As String = Nothing
+
+            If isSubProperty Then
+                Dim parts = code.Split("."c)
+                parentCode = parts(0)
+                subPropertyName = parts(1)
+                Log($"  🔍 Sous-propriété détectée: parent='{parentCode}', propriété='{subPropertyName}'")
+            End If
+
+            ' Filtrer les logs pour le code (parent si sous-propriété)
+            Dim relevantLogs As List(Of DeviceLog)
+
+            If isSubProperty Then
+                ' Pour une sous-propriété, chercher les logs du parent
+                relevantLogs = logs.Where(Function(l) l.Code?.ToLower() = parentCode.ToLower()).ToList()
+            Else
+                ' Code simple
+                relevantLogs = logs.Where(Function(l) l.Code?.ToLower() = code.ToLower()).ToList()
+            End If
 
             If relevantLogs.Count = 0 Then
                 Log($"  ⚠️ Aucun log avec code '{code}' (Total logs: {logs.Count})")
@@ -404,16 +467,38 @@ Public Class TuyaHistoryService
                                     Dim numericValues As New List(Of Double)
                                     For Each logEntry In g
                                         Dim val As Double
-                                        If Double.TryParse(logEntry.Value, Globalization.NumberStyles.Any,
+                                        Dim valueToparse As String = logEntry.Value
+
+                                        ' ✅ NOUVEAU: Si c'est une sous-propriété, extraire du JSON
+                                        If isSubProperty AndAlso IsJsonValue(logEntry.Value) Then
+                                            Try
+                                                Dim jsonObj = JObject.Parse(logEntry.Value)
+                                                Dim subProp = jsonObj(subPropertyName)
+                                                If subProp IsNot Nothing Then
+                                                    valueToparse = subProp.ToString()
+                                                Else
+                                                    ' Sous-propriété non trouvée dans ce log
+                                                    Continue For
+                                                End If
+                                            Catch ex As Exception
+                                                ' JSON invalide, ignorer cette entrée
+                                                failedCount += 1
+                                                Continue For
+                                            End Try
+                                        End If
+
+                                        If Double.TryParse(valueToparse, Globalization.NumberStyles.Any,
                                                           Globalization.CultureInfo.InvariantCulture, val) Then
                                             parsedCount += 1
                                             ' Conversions d'unités selon le code DP
-                                            Select Case code.ToLower()
-                                                Case "cur_power"
+                                            ' ✅ MODIFIÉ: Gérer les conversions pour les sous-propriétés aussi
+                                            Dim codeForConversion = If(isSubProperty, code.ToLower(), code.ToLower())
+                                            Select Case codeForConversion
+                                                Case "cur_power", "phase_a.power"
                                                     val = val / 10.0 ' Watts
-                                                Case "cur_voltage"
+                                                Case "cur_voltage", "phase_a.voltage"
                                                     val = val / 10.0 ' Volts
-                                                Case "cur_current"
+                                                Case "cur_current", "phase_a.electriccurrent"
                                                     val = val / 1000.0 ' Amperes (mA → A)
                                                 Case "add_ele"
                                                     val = val / 1000.0 ' kWh
@@ -790,9 +875,22 @@ Public Class TuyaHistoryService
 
     ''' <summary>
     ''' Détermine l'unité selon le code DP
+    ''' ✅ MODIFIÉ: Supporte les sous-propriétés (ex: phase_a.power)
     ''' </summary>
     Private Function DetermineUnit(code As String) As String
-        Select Case code.ToLower()
+        Dim codeLower = code.ToLower()
+
+        ' ✅ NOUVEAU: Gérer les sous-propriétés en examinant le nom complet
+        If codeLower.Contains(".power") Then
+            Return "W"
+        ElseIf codeLower.Contains(".voltage") Then
+            Return "V"
+        ElseIf codeLower.Contains(".electriccurrent") OrElse codeLower.Contains(".current") Then
+            Return "mA"
+        End If
+
+        ' Codes standards
+        Select Case codeLower
             Case "add_ele", "forward_energy_total"
                 Return "kWh"
             Case "cur_power", "phase_a"
