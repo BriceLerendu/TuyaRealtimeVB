@@ -227,11 +227,12 @@ Public Class DeviceCard
     Private Function CreateIdLabel() As Label
         Dim label = New Label With {
             .Location = New Point(65, 42),
-            .Size = New Size(240, 16),
+            .Size = New Size(200, 16),
             .Font = New Font("Segoe UI", 7),
             .BackColor = Color.Transparent,
             .ForeColor = Color.FromArgb(142, 142, 147),
-            .Text = _deviceId
+            .Text = _deviceId,
+            .AutoEllipsis = True
         }
         AddHandler label.Click, AddressOf OnCardClick
         Return label
