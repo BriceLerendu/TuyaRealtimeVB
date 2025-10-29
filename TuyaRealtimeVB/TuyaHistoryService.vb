@@ -766,7 +766,8 @@ Public Class TuyaHistoryService
 
                             ' 🔍 DIAGNOSTIC: Afficher les valeurs phase_a pour déboguer
                             If code?.ToLower() = "phase_a" OrElse code?.ToLower() = "phase_b" OrElse code?.ToLower() = "phase_c" Then
-                                Log($"  🔍 DEBUG phase: code={code}, value={value?.Substring(0, Math.Min(100, value?.Length ?? 0))}, isJSON={IsJsonValue(value)}")
+                                Dim valuePreview As String = If(value IsNot Nothing, value.Substring(0, Math.Min(100, value.Length)), "null")
+                                Log($"  🔍 DEBUG phase: code={code}, value={valuePreview}, isJSON={IsJsonValue(value)}")
                             End If
 
                             ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
@@ -885,7 +886,8 @@ Public Class TuyaHistoryService
 
                                 ' 🔍 DIAGNOSTIC: Afficher les valeurs phase_a pour déboguer
                                 If code?.ToLower() = "phase_a" OrElse code?.ToLower() = "phase_b" OrElse code?.ToLower() = "phase_c" Then
-                                    Log($"  🔍 DEBUG phase (v2.0): code={code}, value={value?.Substring(0, Math.Min(100, value?.Length ?? 0))}, isJSON={IsJsonValue(value)}")
+                                    Dim valuePreview As String = If(value IsNot Nothing, value.Substring(0, Math.Min(100, value.Length)), "null")
+                                    Log($"  🔍 DEBUG phase (v2.0): code={code}, value={valuePreview}, isJSON={IsJsonValue(value)}")
                                 End If
 
                                 ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
