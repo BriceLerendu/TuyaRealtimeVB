@@ -14,6 +14,10 @@ Public Class TuyaHistoryService
     Private ReadOnly _statisticsCache As New Dictionary(Of String, CachedStatistics)
     Private ReadOnly _logsCache As New Dictionary(Of String, CachedLogs)
     Private Const CACHE_TTL_MINUTES As Integer = 5
+    Private Const STATS_CACHE_TTL_MINUTES As Integer = 10 ' Cache plus long pour les statistiques
+
+    ' Mode diagnostic (désactivé par défaut pour meilleures performances)
+    Private _enableDiagnostics As Boolean = False
 
     ' Codes DP à essayer par ordre de priorité (réduit à 3 codes les plus courants)
     ' Énergie/Puissance
@@ -26,6 +30,15 @@ Public Class TuyaHistoryService
     Public Sub New(apiClient As TuyaApiClient, Optional logCallback As Action(Of String) = Nothing)
         _apiClient = apiClient
         _logCallback = logCallback
+    End Sub
+
+    ''' <summary>
+    ''' Active ou désactive le mode diagnostic (logs détaillés)
+    ''' Le mode diagnostic est désactivé par défaut pour de meilleures performances
+    ''' </summary>
+    Public Sub SetDiagnosticMode(enabled As Boolean)
+        _enableDiagnostics = enabled
+        Log($"Mode diagnostic: {If(enabled, "activé", "désactivé")}")
     End Sub
 
 #Region "Statistiques avec cache et optimisation"
@@ -58,16 +71,18 @@ Public Class TuyaHistoryService
                                 .OrderBy(Function(c) c) _
                                 .ToList()
 
-            ' 🔍 DIAGNOSTIC: Compter les codes avec notation pointée (sous-propriétés)
-            Dim subPropertyCount = allCodes.Where(Function(c) c.Contains(".")).Count()
+            Log($"🔍 Codes DP disponibles: {allCodes.Count} codes")
 
-            Log($"🔍 Codes DP disponibles: {String.Join(", ", allCodes)}")
-            Log($"   Total: {allCodes.Count} codes ({subPropertyCount} sous-propriétés avec notation pointée)")
+            ' 🔍 DIAGNOSTIC détaillé (seulement si activé)
+            If _enableDiagnostics Then
+                Dim subPropertyCount = allCodes.Where(Function(c) c.Contains(".")).Count()
+                Log($"   Détails: {String.Join(", ", allCodes)}")
+                Log($"   Total: {allCodes.Count} codes ({subPropertyCount} sous-propriétés avec notation pointée)")
 
-            ' 🔍 DIAGNOSTIC: Afficher spécifiquement les codes phase_*
-            Dim phaseCodes = allCodes.Where(Function(c) c.ToLower().StartsWith("phase_")).ToList()
-            If phaseCodes.Count > 0 Then
-                Log($"   Phase codes trouvés: {String.Join(", ", phaseCodes)}")
+                Dim phaseCodes = allCodes.Where(Function(c) c.ToLower().StartsWith("phase_")).ToList()
+                If phaseCodes.Count > 0 Then
+                    Log($"   Phase codes trouvés: {String.Join(", ", phaseCodes)}")
+                End If
             End If
 
             Return allCodes
@@ -172,16 +187,15 @@ Public Class TuyaHistoryService
                             $"{deviceId}_{period}",
                             $"{deviceId}_{period}_{specificCode}")
 
-            ' Vérifier le cache d'abord
+            ' Vérifier le cache d'abord (TTL plus long pour les statistiques)
             If _statisticsCache.ContainsKey(cacheKey) Then
                 Dim cached = _statisticsCache(cacheKey)
-                If (DateTime.Now - cached.Timestamp).TotalMinutes < CACHE_TTL_MINUTES Then
+                If (DateTime.Now - cached.Timestamp).TotalMinutes < STATS_CACHE_TTL_MINUTES Then
                     Log($"📦 Cache hit pour {deviceId} ({period})")
                     Return cached.Data
                 Else
                     ' Cache expiré, le retirer
                     _statisticsCache.Remove(cacheKey)
-                    Log($"🕐 Cache expiré pour {deviceId} ({period})")
                 End If
             End If
 
@@ -387,23 +401,20 @@ Public Class TuyaHistoryService
     ) As DeviceStatistics
 
         Try
-            ' 🔍 DIAGNOSTIC: Afficher tous les codes DP présents dans les logs
-            Dim allCodes = logs.Where(Function(l) Not String.IsNullOrEmpty(l.Code)) _
-                              .Select(Function(l) l.Code) _
-                              .Distinct() _
-                              .ToList()
-            Log($"  🔍 Codes DP trouvés dans les logs: {String.Join(", ", allCodes)}")
+            ' 🔍 DIAGNOSTIC détaillé (seulement si activé)
+            If _enableDiagnostics Then
+                Dim allCodes = logs.Where(Function(l) Not String.IsNullOrEmpty(l.Code)) _
+                                  .Select(Function(l) l.Code) _
+                                  .Distinct() _
+                                  .ToList()
+                Log($"  🔍 Codes DP trouvés dans les logs: {String.Join(", ", allCodes)}")
+            End If
 
-            ' ✅ NOUVEAU: Détecter si c'est une sous-propriété (ex: phase_a.power)
+            ' ✅ Détecter si c'est une sous-propriété (ex: phase_a.power)
             Dim isSubProperty = code.Contains(".")
-            Dim parentCode As String = Nothing
-            Dim subPropertyName As String = Nothing
-
-            If isSubProperty Then
+            If isSubProperty AndAlso _enableDiagnostics Then
                 Dim parts = code.Split("."c)
-                parentCode = parts(0)
-                subPropertyName = parts(1)
-                Log($"  🔍 Sous-propriété détectée: parent='{parentCode}', propriété='{subPropertyName}'")
+                Log($"  🔍 Sous-propriété détectée: {parts(0)}.{parts(1)}")
             End If
 
             ' ✅ CORRECTION: Chercher directement le code complet (les logs sont déjà explosés)
@@ -411,24 +422,26 @@ Public Class TuyaHistoryService
             Dim relevantLogs = logs.Where(Function(l) l.Code?.ToLower() = code.ToLower()).ToList()
 
             If relevantLogs.Count = 0 Then
-                Log($"  ⚠️ Aucun log avec code '{code}' (Total logs: {logs.Count})")
                 Return Nothing
             End If
 
-            ' 📊 DIAGNOSTIC: Afficher la plage de dates des logs
-            Dim distinctDays = relevantLogs.Select(Function(l) l.EventTime.Date).Distinct().OrderBy(Function(d) d).ToList()
-            Log($"  📊 {relevantLogs.Count} logs pour '{code}' sur {distinctDays.Count} jour(s): {distinctDays.First().ToString("dd/MM")} → {distinctDays.Last().ToString("dd/MM")}")
+            ' 📊 DIAGNOSTIC détaillé (seulement si activé)
+            If _enableDiagnostics Then
+                ' ✅ OPTIMISATION: Calcul en une seule passe
+                Dim orderedLogs = relevantLogs.OrderBy(Function(l) l.EventTime).ToList()
+                Dim firstLog = orderedLogs.First()
+                Dim lastLog = orderedLogs.Last()
+                Dim distinctDays = relevantLogs.Select(Function(l) l.EventTime.Date).Distinct().Count()
 
-            ' 🔍 DIAGNOSTIC: Afficher les heures des premiers et derniers logs
-            If relevantLogs.Count > 0 Then
-                Dim firstLog = relevantLogs.OrderBy(Function(l) l.EventTime).First()
-                Dim lastLog = relevantLogs.OrderBy(Function(l) l.EventTime).Last()
-                Log($"  🕐 Plage horaire: {firstLog.EventTime:dd/MM HH:mm} → {lastLog.EventTime:dd/MM HH:mm}")
+                Log($"  📊 {relevantLogs.Count} logs pour '{code}' sur {distinctDays} jour(s)")
+                Log($"  🕐 Plage: {firstLog.EventTime:dd/MM HH:mm} → {lastLog.EventTime:dd/MM HH:mm}")
             End If
 
-            ' 🎯 NOUVEAU: Déterminer le type de visualisation
+            ' 🎯 Déterminer le type de visualisation
             Dim vizType = DetermineVisualizationType(code, logs)
-            Log($"  🎨 Type de visualisation: {vizType}")
+            If _enableDiagnostics Then
+                Log($"  🎨 Type de visualisation: {vizType}")
+            End If
 
             ' Calcul selon le type de visualisation
             Dim hourlyStats As List(Of StatisticPoint)
@@ -500,8 +513,10 @@ Public Class TuyaHistoryService
                 Case Else ' NumericContinuous
                     ' Valeurs numériques continues: moyenne par heure
                     Dim isCumulativeValue = code.ToLower() = "forward_energy_total" OrElse code.ToLower() = "add_ele"
-                    Dim parsedCount As Integer = 0
-                    Dim failedCount As Integer = 0
+
+                    ' ✅ OPTIMISATION: Compteurs seulement si diagnostic activé
+                    Dim parsedCount As Integer = If(_enableDiagnostics, 0, -1)
+                    Dim failedCount As Integer = If(_enableDiagnostics, 0, -1)
 
                     hourlyStats = relevantLogs _
                         .GroupBy(Function(l) New DateTime(l.EventTime.Year, l.EventTime.Month, l.EventTime.Day, l.EventTime.Hour, 0, 0)) _
@@ -515,7 +530,7 @@ Public Class TuyaHistoryService
 
                                         If Double.TryParse(valueToparse, Globalization.NumberStyles.Any,
                                                           Globalization.CultureInfo.InvariantCulture, val) Then
-                                            parsedCount += 1
+                                            If _enableDiagnostics Then parsedCount += 1
                                             ' Conversions d'unités selon le code DP
                                             ' ✅ NOTE: Les valeurs des sous-propriétés phase_*.* sont déjà converties lors du décodage
                                             ' Donc on ne doit PAS les reconvertir ici
@@ -548,7 +563,7 @@ Public Class TuyaHistoryService
                                             End If
                                             numericValues.Add(val)
                                         Else
-                                            failedCount += 1
+                                            If _enableDiagnostics Then failedCount += 1
                                         End If
                                     Next
 
@@ -570,7 +585,9 @@ Public Class TuyaHistoryService
                         .OrderBy(Function(s) s.Timestamp) _
                         .ToList()
 
-                    Log($"  📊 Parsing valeurs: {parsedCount} réussies, {failedCount} échouées")
+                    If _enableDiagnostics Then
+                        Log($"  📊 Parsing valeurs: {parsedCount} réussies, {failedCount} échouées")
+                    End If
             End Select
 
             ' Vérifier si nous avons des données à afficher
@@ -748,6 +765,124 @@ Public Class TuyaHistoryService
     End Function
 
     ''' <summary>
+    ''' Parse une entrée de log JSON et explose les sous-propriétés si nécessaire
+    ''' Retourne une liste car un log peut être explosé en plusieurs sous-propriétés
+    ''' ✅ OPTIMISATION: Factorisation du code dupliqué entre V1 et V2
+    ''' </summary>
+    Private Function ParseLogEntry(jItem As JObject) As List(Of DeviceLog)
+        Dim logs As New List(Of DeviceLog)
+
+        Try
+            Dim timestamp = jItem("event_time")?.ToObject(Of Long)()
+            Dim code = jItem("code")?.ToString()
+            Dim value = jItem("value")?.ToString()
+
+            If Not timestamp.HasValue Then Return logs
+
+            ' event_time est en millisecondes
+            Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
+
+            ' Diagnostic seulement si activé
+            If _enableDiagnostics AndAlso IsPhaseCode(code) Then
+                Dim valuePreview As String = If(value IsNot Nothing, value.Substring(0, Math.Min(100, value.Length)), "null")
+                Log($"  🔍 DEBUG phase: code={code}, value={valuePreview}, isJSON={IsJsonValue(value)}")
+            End If
+
+            ' ✅ Détecter et exploser les propriétés JSON
+            If IsJsonValue(value) Then
+                Try
+                    Dim jsonObj = JObject.Parse(value)
+
+                    ' Créer un log pour chaque sous-propriété
+                    For Each prop In jsonObj.Properties()
+                        Dim subPropertyCode = $"{code}.{prop.Name}"
+                        Dim subPropertyValue = prop.Value.ToString()
+                        Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
+                        Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
+
+                        logs.Add(New DeviceLog With {
+                            .EventTime = dt,
+                            .Code = subPropertyCode,
+                            .Value = subPropertyValue,
+                            .EventType = eventType,
+                            .Description = description
+                        })
+                    Next
+
+                    ' Garder aussi le log parent pour compatibilité
+                    Dim parentEventType = DetermineEventType(code, value)
+                    Dim parentDescription = CreateEventDescription(code, value, parentEventType)
+
+                    logs.Add(New DeviceLog With {
+                        .EventTime = dt,
+                        .Code = code,
+                        .Value = value,
+                        .EventType = parentEventType,
+                        .Description = parentDescription
+                    })
+                Catch
+                    ' Si l'explosion échoue, traiter comme un log normal
+                    AddNormalLog(logs, dt, code, value)
+                End Try
+            ElseIf IsPhaseCode(code) AndAlso Not String.IsNullOrWhiteSpace(value) Then
+                ' ✅ Détecter et décoder les données phase en base64
+                Dim decodedPhaseData = DecodePhaseBase64(code, value)
+
+                If decodedPhaseData IsNot Nothing AndAlso decodedPhaseData.Count > 0 Then
+                    ' Créer un log pour chaque sous-propriété décodée
+                    For Each kvp In decodedPhaseData
+                        Dim subPropertyCode = kvp.Key
+                        Dim subPropertyValue = kvp.Value
+                        Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
+                        Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
+
+                        logs.Add(New DeviceLog With {
+                            .EventTime = dt,
+                            .Code = subPropertyCode,
+                            .Value = subPropertyValue,
+                            .EventType = eventType,
+                            .Description = description
+                        })
+                    Next
+
+                    If _enableDiagnostics Then
+                        Log($"      ✅ Décodé {code} → {decodedPhaseData.Count} sous-propriétés")
+                    End If
+                Else
+                    ' Si le décodage échoue, traiter comme un log normal
+                    AddNormalLog(logs, dt, code, value)
+                End If
+            Else
+                ' Valeur non-JSON et non-phase, traiter normalement
+                AddNormalLog(logs, dt, code, value)
+            End If
+
+        Catch ex As Exception
+            If _enableDiagnostics Then
+                Log($"      ⚠️ Erreur ParseLogEntry: {ex.Message}")
+            End If
+        End Try
+
+        Return logs
+    End Function
+
+    ''' <summary>
+    ''' Ajoute un log normal (helper pour ParseLogEntry)
+    ''' </summary>
+    Private Sub AddNormalLog(logs As List(Of DeviceLog), dt As DateTime, code As String, value As String)
+        Dim eventType = DetermineEventType(code, value)
+        Dim description = CreateEventDescription(code, value, eventType)
+
+        logs.Add(New DeviceLog With {
+            .EventTime = dt,
+            .Code = code,
+            .Value = value,
+            .EventType = eventType,
+            .Description = description
+        })
+    End Sub
+
+    ''' <summary>
     ''' API v1.0 pour les logs
     ''' </summary>
     Private Async Function GetDeviceLogsV1Async(
@@ -806,116 +941,12 @@ Public Class TuyaHistoryService
 
             If logsArray IsNot Nothing Then
                 Log($"    📊 API v1.0 retourné {logsArray.Count} logs")
+                ' ✅ OPTIMISATION: Utiliser ParseLogEntry factorisé
                 For Each item As JToken In logsArray
-                        Dim jItem = CType(item, JObject)
-                        Dim timestamp = jItem("event_time")?.ToObject(Of Long)()
-                        Dim code = jItem("code")?.ToString()
-                        Dim value = jItem("value")?.ToString()
-
-                        If timestamp.HasValue Then
-                            ' event_time est en millisecondes
-                            Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
-
-                            ' 🔍 DIAGNOSTIC: Afficher les valeurs phase_a pour déboguer
-                            If code?.ToLower() = "phase_a" OrElse code?.ToLower() = "phase_b" OrElse code?.ToLower() = "phase_c" Then
-                                Dim valuePreview As String = If(value IsNot Nothing, value.Substring(0, Math.Min(100, value.Length)), "null")
-                                Log($"  🔍 DEBUG phase: code={code}, value={valuePreview}, isJSON={IsJsonValue(value)}")
-                            End If
-
-                            ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
-                            If IsJsonValue(value) Then
-                                Try
-                                    Dim jsonObj = JObject.Parse(value)
-
-                                    ' Créer un log pour chaque sous-propriété
-                                    For Each prop In jsonObj.Properties()
-                                        Dim subPropertyCode = $"{code}.{prop.Name}"
-                                        Dim subPropertyValue = prop.Value.ToString()
-                                        Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
-                                        Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
-
-                                        allLogs.Add(New DeviceLog With {
-                                            .EventTime = dt,
-                                            .Code = subPropertyCode,
-                                            .Value = subPropertyValue,
-                                            .EventType = eventType,
-                                            .Description = description
-                                        })
-                                    Next
-
-                                    ' On garde aussi le log parent pour compatibilité
-                                    Dim parentEventType = DetermineEventType(code, value)
-                                    Dim parentDescription = CreateEventDescription(code, value, parentEventType)
-
-                                    allLogs.Add(New DeviceLog With {
-                                        .EventTime = dt,
-                                        .Code = code,
-                                        .Value = value,
-                                        .EventType = parentEventType,
-                                        .Description = parentDescription
-                                    })
-                                Catch ex As Exception
-                                    ' Si l'explosion échoue, traiter comme un log normal
-                                    Dim eventType = DetermineEventType(code, value)
-                                    Dim description = CreateEventDescription(code, value, eventType)
-
-                                    allLogs.Add(New DeviceLog With {
-                                        .EventTime = dt,
-                                        .Code = code,
-                                        .Value = value,
-                                        .EventType = eventType,
-                                        .Description = description
-                                    })
-                                End Try
-                            ElseIf IsPhaseCode(code) AndAlso Not String.IsNullOrWhiteSpace(value) Then
-                                ' ✅ NOUVEAU: Détecter et décoder les données phase en base64
-                                Dim decodedPhaseData = DecodePhaseBase64(code, value)
-
-                                If decodedPhaseData IsNot Nothing AndAlso decodedPhaseData.Count > 0 Then
-                                    ' Créer un log pour chaque sous-propriété décodée
-                                    For Each kvp In decodedPhaseData
-                                        Dim subPropertyCode = kvp.Key
-                                        Dim subPropertyValue = kvp.Value
-                                        Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
-                                        Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
-
-                                        allLogs.Add(New DeviceLog With {
-                                            .EventTime = dt,
-                                            .Code = subPropertyCode,
-                                            .Value = subPropertyValue,
-                                            .EventType = eventType,
-                                            .Description = description
-                                        })
-                                    Next
-
-                                    Log($"      ✅ Décodé {code} → {decodedPhaseData.Count} sous-propriétés")
-                                Else
-                                    ' Si le décodage échoue, traiter comme un log normal
-                                    Dim eventType = DetermineEventType(code, value)
-                                    Dim description = CreateEventDescription(code, value, eventType)
-
-                                    allLogs.Add(New DeviceLog With {
-                                        .EventTime = dt,
-                                        .Code = code,
-                                        .Value = value,
-                                        .EventType = eventType,
-                                        .Description = description
-                                    })
-                                End If
-                            Else
-                                ' Valeur non-JSON et non-phase, traiter normalement
-                                Dim eventType = DetermineEventType(code, value)
-                                Dim description = CreateEventDescription(code, value, eventType)
-
-                                allLogs.Add(New DeviceLog With {
-                                    .EventTime = dt,
-                                    .Code = code,
-                                    .Value = value,
-                                    .EventType = eventType,
-                                    .Description = description
-                                })
-                            End If
-                        End If
+                    Dim parsedLogs = ParseLogEntry(CType(item, JObject))
+                    If parsedLogs IsNot Nothing Then
+                        allLogs.AddRange(parsedLogs)
+                    End If
                 Next
             Else
                 Log($"    ⚠️ API v1.0 logsArray = null")
@@ -962,114 +993,11 @@ Public Class TuyaHistoryService
                     End If
 
                     If logsArray IsNot Nothing Then
+                        ' ✅ OPTIMISATION: Utiliser ParseLogEntry factorisé
                         For Each item As JToken In logsArray
-                            Dim jItem = CType(item, JObject)
-                            Dim timestamp = jItem("event_time")?.ToObject(Of Long)()
-                            Dim code = jItem("code")?.ToString()
-                            Dim value = jItem("value")?.ToString()
-
-                            If timestamp.HasValue Then
-                                Dim dt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp.Value).LocalDateTime
-
-                                ' 🔍 DIAGNOSTIC: Afficher les valeurs phase_a pour déboguer
-                                If code?.ToLower() = "phase_a" OrElse code?.ToLower() = "phase_b" OrElse code?.ToLower() = "phase_c" Then
-                                    Dim valuePreview As String = If(value IsNot Nothing, value.Substring(0, Math.Min(100, value.Length)), "null")
-                                    Log($"  🔍 DEBUG phase (v2.0): code={code}, value={valuePreview}, isJSON={IsJsonValue(value)}")
-                                End If
-
-                                ' ✅ NOUVEAU: Détecter et exploser les propriétés JSON
-                                If IsJsonValue(value) Then
-                                    Try
-                                        Dim jsonObj = JObject.Parse(value)
-
-                                        ' Créer un log pour chaque sous-propriété
-                                        For Each prop In jsonObj.Properties()
-                                            Dim subPropertyCode = $"{code}.{prop.Name}"
-                                            Dim subPropertyValue = prop.Value.ToString()
-                                            Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
-                                            Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
-
-                                            allLogs.Add(New DeviceLog With {
-                                                .EventTime = dt,
-                                                .Code = subPropertyCode,
-                                                .Value = subPropertyValue,
-                                                .EventType = eventType,
-                                                .Description = description
-                                            })
-                                        Next
-
-                                        ' On garde aussi le log parent pour compatibilité
-                                        Dim parentEventType = DetermineEventType(code, value)
-                                        Dim parentDescription = CreateEventDescription(code, value, parentEventType)
-
-                                        allLogs.Add(New DeviceLog With {
-                                            .EventTime = dt,
-                                            .Code = code,
-                                            .Value = value,
-                                            .EventType = parentEventType,
-                                            .Description = parentDescription
-                                        })
-                                    Catch ex As Exception
-                                        ' Si l'explosion échoue, traiter comme un log normal
-                                        Dim eventType = DetermineEventType(code, value)
-                                        Dim description = CreateEventDescription(code, value, eventType)
-
-                                        allLogs.Add(New DeviceLog With {
-                                            .EventTime = dt,
-                                            .Code = code,
-                                            .Value = value,
-                                            .EventType = eventType,
-                                            .Description = description
-                                        })
-                                    End Try
-                                ElseIf IsPhaseCode(code) AndAlso Not String.IsNullOrWhiteSpace(value) Then
-                                    ' ✅ NOUVEAU: Détecter et décoder les données phase en base64
-                                    Dim decodedPhaseData = DecodePhaseBase64(code, value)
-
-                                    If decodedPhaseData IsNot Nothing AndAlso decodedPhaseData.Count > 0 Then
-                                        ' Créer un log pour chaque sous-propriété décodée
-                                        For Each kvp In decodedPhaseData
-                                            Dim subPropertyCode = kvp.Key
-                                            Dim subPropertyValue = kvp.Value
-                                            Dim eventType = DetermineEventType(subPropertyCode, subPropertyValue)
-                                            Dim description = CreateEventDescription(subPropertyCode, subPropertyValue, eventType)
-
-                                            allLogs.Add(New DeviceLog With {
-                                                .EventTime = dt,
-                                                .Code = subPropertyCode,
-                                                .Value = subPropertyValue,
-                                                .EventType = eventType,
-                                                .Description = description
-                                            })
-                                        Next
-
-                                        Log($"      ✅ Décodé {code} → {decodedPhaseData.Count} sous-propriétés")
-                                    Else
-                                        ' Si le décodage échoue, traiter comme un log normal
-                                        Dim eventType = DetermineEventType(code, value)
-                                        Dim description = CreateEventDescription(code, value, eventType)
-
-                                        allLogs.Add(New DeviceLog With {
-                                            .EventTime = dt,
-                                            .Code = code,
-                                            .Value = value,
-                                            .EventType = eventType,
-                                            .Description = description
-                                        })
-                                    End If
-                                Else
-                                    ' Valeur non-JSON et non-phase, traiter normalement
-                                    Dim eventType = DetermineEventType(code, value)
-                                    Dim description = CreateEventDescription(code, value, eventType)
-
-                                    allLogs.Add(New DeviceLog With {
-                                        .EventTime = dt,
-                                        .Code = code,
-                                        .Value = value,
-                                        .EventType = eventType,
-                                        .Description = description
-                                    })
-                                End If
+                            Dim parsedLogs = ParseLogEntry(CType(item, JObject))
+                            If parsedLogs IsNot Nothing Then
+                                allLogs.AddRange(parsedLogs)
                             End If
                         Next
                     End If
@@ -1132,7 +1060,9 @@ Public Class TuyaHistoryService
     ''' </summary>
     Private Function DetermineVisualizationType(code As String, logs As List(Of DeviceLog)) As SensorVisualizationType
         Dim codeLower = code.ToLower()
-        Log($"  🔍 Détection type visualisation pour code: '{code}'")
+        If _enableDiagnostics Then
+            Log($"  🔍 Détection type visualisation pour code: '{code}'")
+        End If
 
         ' 1. D'abord, vérifier si les valeurs sont uniquement binaires (0/1, true/false)
         ' ou des modes discrets (hot/cool/eco/etc.)
@@ -1142,7 +1072,9 @@ Public Class TuyaHistoryService
             Dim relevantLogs = logs.Where(Function(l) l.Code?.ToLower() = codeLower).ToList()
             If relevantLogs.Count > 0 Then
                 Dim uniqueValues = relevantLogs.Select(Function(l) l.Value?.ToLower()).Distinct().Where(Function(v) Not String.IsNullOrEmpty(v)).ToList()
-                Log($"  🔍 Valeurs uniques trouvées: {String.Join(", ", uniqueValues)}")
+                If _enableDiagnostics Then
+                    Log($"  🔍 Valeurs uniques trouvées: {String.Join(", ", uniqueValues)}")
+                End If
 
                 ' Si uniquement des valeurs binaires → Timeline avec états
                 If uniqueValues.Count <= 2 AndAlso uniqueValues.Count > 0 AndAlso
@@ -1150,16 +1082,14 @@ Public Class TuyaHistoryService
                                               v = "true" OrElse v = "false" OrElse
                                               v = "on" OrElse v = "off" OrElse
                                               v = "open" OrElse v = "close") Then
-                    Log($"  ✅ Type détecté: BinaryState (valeurs binaires détectées)")
                     Return SensorVisualizationType.BinaryState
                 End If
 
-                ' ✅ NOUVEAU: Si c'est un code "mode" avec des valeurs discrètes (hot, cool, eco, etc.)
+                ' ✅ Si c'est un code "mode" avec des valeurs discrètes (hot, cool, eco, etc.)
                 ' → Timeline avec états pour visualiser les changements de mode
                 If codeLower.Contains("mode") Then
                     Dim modeValues = New String() {"hot", "cool", "cold", "eco", "auto", "manual", "comfort", "holiday", "program", "away"}
                     If uniqueValues.Any(Function(v) modeValues.Contains(v)) Then
-                        Log($"  ✅ Type détecté: BinaryState (mode de chauffage détecté)")
                         Return SensorVisualizationType.BinaryState
                     End If
                 End If
@@ -1170,7 +1100,6 @@ Public Class TuyaHistoryService
         If codeLower.Contains("switch") OrElse codeLower.Contains("door") OrElse
            codeLower.Contains("contact") OrElse codeLower.Contains("window") OrElse
            codeLower.Contains("lock") OrElse codeLower.Contains("opened") Then
-            Log($"  ✅ Type détecté: BinaryState (mots-clés)")
             Return SensorVisualizationType.BinaryState
         End If
 
@@ -1181,12 +1110,10 @@ Public Class TuyaHistoryService
            codeLower.Contains("presence") OrElse codeLower.Contains("smoke") OrElse
            codeLower.Contains("tamper") OrElse codeLower.Contains("alarm") OrElse
            codeLower.Contains("doorbell") OrElse codeLower.Contains("button") Then
-            Log($"  ✅ Type détecté: DiscreteEvents (mots-clés)")
             Return SensorVisualizationType.DiscreteEvents
         End If
 
         ' 4. Par défaut: valeurs numériques continues
-        Log($"  ✅ Type détecté: NumericContinuous (par défaut)")
         Return SensorVisualizationType.NumericContinuous
     End Function
 
@@ -1227,27 +1154,22 @@ Public Class TuyaHistoryService
 
     ''' <summary>
     ''' Crée une description lisible
-    ''' ✅ MODIFIÉ: Gère les sous-propriétés explosées (ex: phase_a.power)
+    ''' ✅ OPTIMISÉ: Simplifié car les valeurs sont déjà converties lors du décodage
     ''' </summary>
     Private Function CreateEventDescription(code As String, value As String, eventType As String) As String
-        ' ✅ NOUVEAU: Gérer les sous-propriétés explosées
+        ' ✅ Gérer les sous-propriétés explosées
         If code.Contains(".") Then
             Dim parts = code.Split("."c)
             Dim parentCode = parts(0).ToLower()
             Dim subProperty = parts(1).ToLower()
 
             ' Déterminer l'icône et le nom du parent
-            Dim parentIcon As String = "📊"
-            Dim parentName As String = parentCode.ToUpper()
+            Dim parentIcon As String = If(parentCode.Contains("phase"), "⚡", "📊")
+            Dim parentName As String = If(parentCode.Contains("phase"), parentCode.Replace("_", " ").ToUpper(), parentCode.ToUpper())
 
-            If parentCode.Contains("phase") Then
-                parentIcon = "⚡"
-                parentName = parentCode.Replace("_", " ").ToUpper()
-            End If
-
-            ' Déterminer le nom et l'unité de la sous-propriété
+            ' Déterminer le nom et l'unité de la sous-propriété (les valeurs sont déjà converties!)
             Dim propertyName As String
-            Dim unit As String = ""
+            Dim unit As String
 
             Select Case subProperty
                 Case "power"
@@ -1258,14 +1180,7 @@ Public Class TuyaHistoryService
                     unit = " V"
                 Case "electriccurrent", "current"
                     propertyName = "Courant"
-                    ' Convertir en mA pour l'affichage
-                    Dim valDouble As Double
-                    If Double.TryParse(value, Globalization.NumberStyles.Any, Globalization.CultureInfo.InvariantCulture, valDouble) Then
-                        value = (valDouble / 1000.0).ToString("F2")
-                        unit = " A"
-                    Else
-                        unit = " mA"
-                    End If
+                    unit = " A"
                 Case "temperature"
                     propertyName = "Température"
                     unit = " °C"
@@ -1274,28 +1189,10 @@ Public Class TuyaHistoryService
                     unit = " %"
                 Case Else
                     propertyName = subProperty
+                    unit = ""
             End Select
 
-            ' Formater la valeur si c'est un nombre
-            Dim formattedValue As String = value
-            If unit <> " mA" Then ' Déjà formaté pour le courant
-                Dim valDouble As Double
-                If Double.TryParse(value, Globalization.NumberStyles.Any, Globalization.CultureInfo.InvariantCulture, valDouble) Then
-                    ' Appliquer les conversions selon la propriété
-                    Select Case subProperty
-                        Case "power"
-                            formattedValue = (valDouble / 10.0).ToString("F1")
-                        Case "voltage"
-                            formattedValue = (valDouble / 10.0).ToString("F1")
-                        Case "temperature"
-                            formattedValue = (valDouble / 10.0).ToString("F1")
-                        Case Else
-                            formattedValue = valDouble.ToString("F1")
-                    End Select
-                End If
-            End If
-
-            Return $"{parentIcon} {parentName} - {propertyName}: {formattedValue}{unit}"
+            Return $"{parentIcon} {parentName} - {propertyName}: {value}{unit}"
         End If
 
         ' Gestion standard des types d'événements
