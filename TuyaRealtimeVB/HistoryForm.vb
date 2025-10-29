@@ -29,7 +29,7 @@ Public Class HistoryForm
 
     ' ✅ PHASE 6 - Cache des données de graphique pour éviter recalculs
     Private _cachedStats As DeviceStatistics = Nothing
-    Private _cachedLogs As List(Of DeviceLogEntry) = Nothing
+    Private _cachedLogs As List(Of DeviceLog) = Nothing
     Private _cacheTimestamp As DateTime = DateTime.MinValue
     Private Const CHART_CACHE_DURATION_MINUTES As Integer = 5
     Private Const MAX_CHART_DATAPOINTS As Integer = 1000  ' Downsampling si plus de 1000 points
@@ -1087,12 +1087,12 @@ Public Class HistoryForm
     ''' Réduit le nombre de points en préservant les variations significatives
     ''' Référence: https://github.com/sveinn-steinarsson/flot-downsample
     ''' </summary>
-    Private Function DownsampleLTTB(data As List(Of DataPoint), threshold As Integer) As List(Of DataPoint)
+    Private Function DownsampleLTTB(data As List(Of StatisticPoint), threshold As Integer) As List(Of StatisticPoint)
         If data Is Nothing OrElse data.Count <= threshold Then
             Return data
         End If
 
-        Dim sampled As New List(Of DataPoint)
+        Dim sampled As New List(Of StatisticPoint)
         Dim bucketSize = CDbl(data.Count - 2) / (threshold - 2)
 
         ' Toujours garder le premier point
@@ -1126,7 +1126,7 @@ Public Class HistoryForm
             Dim pointAValue = sampled(sampled.Count - 1).Value
 
             Dim maxArea As Double = -1
-            Dim maxAreaPoint As DataPoint = Nothing
+            Dim maxAreaPoint As StatisticPoint = Nothing
 
             For j As Integer = rangeStart To rangeEnd - 1
                 If j < data.Count Then
