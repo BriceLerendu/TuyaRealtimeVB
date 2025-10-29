@@ -18,6 +18,10 @@ Public Class DashboardForm
     Private Const FLASH_TIMER_INTERVAL As Integer = 300
     Private Const FLASH_COUNT As Integer = 6
 
+    ' ✅ PHASE 5 - Virtualisation: Rendu progressif pour 500+ appareils
+    Private Const PROGRESSIVE_RENDER_BATCH_SIZE As Integer = 20
+    Private Const PROGRESSIVE_RENDER_DELAY_MS As Integer = 50
+
     ' Couleurs thématiques
     Private Shared ReadOnly DarkBg As Color = Color.FromArgb(45, 45, 48)
     Private Shared ReadOnly LightBg As Color = Color.FromArgb(242, 242, 247)
@@ -80,6 +84,10 @@ Public Class DashboardForm
     Private _realTimeActive As Boolean = False
     Private _realTimePausedCount As Integer = 0
     Private _wasRealTimeActiveBeforePause As Boolean = False
+
+    ' ✅ PHASE 5 - Virtualisation: Rendu progressif
+    Private _progressiveRenderCancellation As Threading.CancellationTokenSource
+    Private _isProgressiveRendering As Boolean = False
 
     Private Enum ViewMode
         Grid
@@ -1095,27 +1103,123 @@ Public Class DashboardForm
 #End Region
 
 #Region "Gestion de l'affichage"
+    ''' <summary>
+    ''' ✅ PHASE 5 - Optimisé avec rendu progressif pour 500+ appareils
+    ''' </summary>
     Private Sub DisplayDevicesByRoom()
         Try
+            ' Annuler tout rendu progressif en cours
+            _progressiveRenderCancellation?.Cancel()
+            _progressiveRenderCancellation = New Threading.CancellationTokenSource()
+
             LogDebug("Organisation des appareils par pièce...")
             _devicesPanel.SuspendLayout()
             _devicesPanel.Controls.Clear()
             _roomHeaders.Clear()
 
-            Dim filteredDevices = ApplyRoomFilter()
-            Dim devicesByRoom = GroupDevicesByRoom(filteredDevices)
+            Dim filteredDevices = ApplyRoomFilter().ToList()
+            Dim devicesByRoom = GroupDevicesByRoom(filteredDevices).ToList()
+            Dim totalDevices = filteredDevices.Count
 
-            For Each roomGroup In devicesByRoom
-                CreateRoomHeader(roomGroup.Key, roomGroup.Count())
-                AddDevicesForRoom(roomGroup)
-            Next
-
-            _devicesPanel.ResumeLayout()
-            LogDebug($"✓ Affichage organisé : {devicesByRoom.Count()} pièces, {filteredDevices.Count()} appareils")
+            ' ✅ PHASE 5 - Utiliser rendu progressif si > 100 appareils
+            If totalDevices > 100 Then
+                LogDebug($"🔄 Rendu progressif activé pour {totalDevices} appareils...")
+                DisplayDevicesByRoomProgressiveAsync(devicesByRoom, _progressiveRenderCancellation.Token)
+            Else
+                ' Rendu classique pour petit nombre d'appareils
+                For Each roomGroup In devicesByRoom
+                    CreateRoomHeader(roomGroup.Key, roomGroup.Count())
+                    AddDevicesForRoom(roomGroup)
+                Next
+                _devicesPanel.ResumeLayout()
+                LogDebug($"✓ Affichage organisé : {devicesByRoom.Count} pièces, {totalDevices} appareils")
+            End If
         Catch ex As Exception
             LogDebug($"ERREUR DisplayDevicesByRoom: {ex.Message}")
-        Finally
             _devicesPanel.ResumeLayout()
+        End Try
+    End Sub
+
+    ''' <summary>
+    ''' ✅ PHASE 5 - Rendu progressif par lots pour éviter de bloquer l'UI
+    ''' </summary>
+    Private Async Sub DisplayDevicesByRoomProgressiveAsync(
+        devicesByRoom As List(Of IGrouping(Of String, DeviceInfo)),
+        cancellationToken As Threading.CancellationToken)
+
+        _isProgressiveRendering = True
+
+        Try
+            Dim totalDevices = devicesByRoom.Sum(Function(g) g.Count())
+            Dim processedDevices = 0
+
+            For Each roomGroup In devicesByRoom
+                If cancellationToken.IsCancellationRequested Then Exit For
+
+                ' Créer l'en-tête de la pièce
+                If InvokeRequired Then
+                    Invoke(Sub() CreateRoomHeader(roomGroup.Key, roomGroup.Count()))
+                Else
+                    CreateRoomHeader(roomGroup.Key, roomGroup.Count())
+                End If
+
+                ' Ajouter les appareils par lots
+                Dim devices = roomGroup.OrderBy(Function(d) d.Name).ToList()
+                For batchStart = 0 To devices.Count - 1 Step PROGRESSIVE_RENDER_BATCH_SIZE
+                    If cancellationToken.IsCancellationRequested Then Exit For
+
+                    Dim batchEnd = Math.Min(batchStart + PROGRESSIVE_RENDER_BATCH_SIZE - 1, devices.Count - 1)
+
+                    If InvokeRequired Then
+                        Invoke(Sub()
+                                   _devicesPanel.SuspendLayout()
+                                   For i = batchStart To batchEnd
+                                       Dim device = devices(i)
+                                       If _deviceCards.ContainsKey(device.Id) Then
+                                           _devicesPanel.Controls.Add(_deviceCards(device.Id))
+                                       Else
+                                           CreateDeviceCard(device.Id, device)
+                                       End If
+                                   Next
+                                   _devicesPanel.ResumeLayout()
+                               End Sub)
+                    Else
+                        _devicesPanel.SuspendLayout()
+                        For i = batchStart To batchEnd
+                            Dim device = devices(i)
+                            If _deviceCards.ContainsKey(device.Id) Then
+                                _devicesPanel.Controls.Add(_deviceCards(device.Id))
+                            Else
+                                CreateDeviceCard(device.Id, device)
+                            End If
+                        Next
+                        _devicesPanel.ResumeLayout()
+                    End If
+
+                    processedDevices += (batchEnd - batchStart + 1)
+                    UpdateStatus($"Chargement des appareils... {processedDevices}/{totalDevices}")
+
+                    ' Délai pour ne pas bloquer l'UI
+                    Await Task.Delay(PROGRESSIVE_RENDER_DELAY_MS, cancellationToken)
+                Next
+            Next
+
+            If Not cancellationToken.IsCancellationRequested Then
+                UpdateStatus($"✓ {totalDevices} appareils chargés")
+                LogDebug($"✓ Rendu progressif terminé : {devicesByRoom.Count} pièces, {totalDevices} appareils")
+            End If
+
+        Catch ex As Threading.Tasks.TaskCanceledException
+            LogDebug("Rendu progressif annulé")
+        Catch ex As Exception
+            LogDebug($"ERREUR DisplayDevicesByRoomProgressiveAsync: {ex.Message}")
+        Finally
+            _isProgressiveRendering = False
+            If InvokeRequired Then
+                Invoke(Sub() _devicesPanel.ResumeLayout())
+            Else
+                _devicesPanel.ResumeLayout()
+            End If
         End Try
     End Sub
 

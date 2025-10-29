@@ -75,6 +75,10 @@ Public Class DeviceCard
     Private _cachedMainPath As GraphicsPath
     Private _cachedFooterPath As GraphicsPath
     Private _isPathCacheValid As Boolean = False
+
+    ' ✅ PHASE 5 - Optimisation: Bitmap caching pour éviter repaints
+    Private _cachedBitmap As Bitmap
+    Private _isBitmapCacheValid As Boolean = False
 #End Region
 
 #Region "Champs privés - Managers"
@@ -158,6 +162,12 @@ Public Class DeviceCard
             If _cachedFooterPath IsNot Nothing Then
                 _cachedFooterPath.Dispose()
                 _cachedFooterPath = Nothing
+            End If
+
+            ' ✅ PHASE 5 - Nettoyer le Bitmap en cache
+            If _cachedBitmap IsNot Nothing Then
+                _cachedBitmap.Dispose()
+                _cachedBitmap = Nothing
             End If
 
             ' Nettoyer les contrôles
@@ -322,20 +332,57 @@ Public Class DeviceCard
 #End Region
 
 #Region "Dessin de la carte"
+    ''' <summary>
+    ''' ✅ PHASE 5 - Optimisation: Bitmap caching pour éviter repaints inutiles
+    ''' </summary>
     Private Sub OnPaintCard(sender As Object, e As PaintEventArgs)
-        Dim g = e.Graphics
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
+        ' Vérifier si le cache bitmap est valide et correspond à la taille actuelle
+        If _isBitmapCacheValid AndAlso _cachedBitmap IsNot Nothing Then
+            If _cachedBitmap.Width = Me.Width AndAlso _cachedBitmap.Height = Me.Height Then
+                ' Cache valide - copie rapide du bitmap
+                e.Graphics.DrawImageUnscaled(_cachedBitmap, 0, 0)
+                Return
+            Else
+                ' Taille changée - invalider le cache
+                _isBitmapCacheValid = False
+                _cachedBitmap?.Dispose()
+                _cachedBitmap = Nothing
+            End If
+        End If
 
-        Dim rect = New Rectangle(2, 2, Me.Width - 5, Me.Height - 5)
+        ' Cache invalide ou inexistant - redessiner
+        If _cachedBitmap Is Nothing Then
+            _cachedBitmap = New Bitmap(Me.Width, Me.Height)
+        End If
 
-        ' ✅ PHASE 1 - Utiliser le cache des GraphicsPath
-        Dim path = GetOrCreateCachedPath(rect, CORNER_RADIUS)
-        DrawShadow(g, rect)
-        DrawBackground(g, path, rect)
-        DrawFooter(g, rect)
-        DrawBorder(g, path)
-        DrawHighlight(g, rect)
+        Using g As Graphics = Graphics.FromImage(_cachedBitmap)
+            g.SmoothingMode = SmoothingMode.AntiAlias
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality
+            g.Clear(Me.Parent?.BackColor If Me.Parent IsNot Nothing Else Color.White)
+
+            Dim rect = New Rectangle(2, 2, Me.Width - 5, Me.Height - 5)
+
+            ' ✅ PHASE 1 - Utiliser le cache des GraphicsPath
+            Dim path = GetOrCreateCachedPath(rect, CORNER_RADIUS)
+            DrawShadow(g, rect)
+            DrawBackground(g, path, rect)
+            DrawFooter(g, rect)
+            DrawBorder(g, path)
+            DrawHighlight(g, rect)
+        End Using
+
+        ' Marquer le cache comme valide
+        _isBitmapCacheValid = True
+
+        ' Copier le bitmap sur l'écran
+        e.Graphics.DrawImageUnscaled(_cachedBitmap, 0, 0)
+    End Sub
+
+    ''' <summary>
+    ''' ✅ PHASE 5 - Invalide le cache bitmap pour forcer un redessin
+    ''' </summary>
+    Private Sub InvalidateBitmapCache()
+        _isBitmapCacheValid = False
     End Sub
 
     ''' <summary>
@@ -916,6 +963,7 @@ Public Class DeviceCard
         _footerBackColor = OnlineFooterBackColor
         _backgroundColor = OnlineBackColor
         _borderColor = OnlineBorderColor
+        InvalidateBitmapCache()  ' ✅ PHASE 5
     End Sub
 
     Private Sub SetOfflineStatus()
@@ -924,6 +972,7 @@ Public Class DeviceCard
         _footerBackColor = OfflineFooterBackColor
         _backgroundColor = OfflineBackColor
         _borderColor = OfflineBorderColor
+        InvalidateBitmapCache()  ' ✅ PHASE 5
     End Sub
 
     Private Sub SetUnknownStatus()
@@ -932,6 +981,7 @@ Public Class DeviceCard
         _footerBackColor = DefaultFooterBackColor
         _backgroundColor = DefaultBackColor
         _borderColor = DefaultBorderColor
+        InvalidateBitmapCache()  ' ✅ PHASE 5
     End Sub
 
     Public Sub UpdateTimestamp()
@@ -983,12 +1033,14 @@ Public Class DeviceCard
         If _flashCount = 1 Then
             _borderColor = FlashBorderColor
             _backgroundColor = FlashBackColor
+            InvalidateBitmapCache()  ' ✅ PHASE 5
         Else
             _flashTimer.Stop()
             _flashCount = 0
             _isFlashing = False
             _borderColor = _originalBorderColor
             _backgroundColor = _originalBackgroundColor
+            InvalidateBitmapCache()  ' ✅ PHASE 5
         End If
 
         Me.Invalidate()
