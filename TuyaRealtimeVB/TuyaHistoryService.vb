@@ -406,16 +406,9 @@ Public Class TuyaHistoryService
                 Log($"  🔍 Sous-propriété détectée: parent='{parentCode}', propriété='{subPropertyName}'")
             End If
 
-            ' Filtrer les logs pour le code (parent si sous-propriété)
-            Dim relevantLogs As List(Of DeviceLog)
-
-            If isSubProperty Then
-                ' Pour une sous-propriété, chercher les logs du parent
-                relevantLogs = logs.Where(Function(l) l.Code?.ToLower() = parentCode.ToLower()).ToList()
-            Else
-                ' Code simple
-                relevantLogs = logs.Where(Function(l) l.Code?.ToLower() = code.ToLower()).ToList()
-            End If
+            ' ✅ CORRECTION: Chercher directement le code complet (les logs sont déjà explosés)
+            ' Les logs créés par GetDeviceLogsV1Async ont déjà les codes explosés (ex: "phase_a.voltage")
+            Dim relevantLogs = logs.Where(Function(l) l.Code?.ToLower() = code.ToLower()).ToList()
 
             If relevantLogs.Count = 0 Then
                 Log($"  ⚠️ Aucun log avec code '{code}' (Total logs: {logs.Count})")
@@ -517,51 +510,42 @@ Public Class TuyaHistoryService
                                     Dim numericValues As New List(Of Double)
                                     For Each logEntry In g
                                         Dim val As Double
+                                        ' ✅ CORRECTION: Les logs sont déjà explosés, la valeur est directement dans logEntry.Value
                                         Dim valueToparse As String = logEntry.Value
-
-                                        ' ✅ NOUVEAU: Si c'est une sous-propriété, extraire du JSON
-                                        If isSubProperty AndAlso IsJsonValue(logEntry.Value) Then
-                                            Try
-                                                Dim jsonObj = JObject.Parse(logEntry.Value)
-                                                Dim subProp = jsonObj(subPropertyName)
-                                                If subProp IsNot Nothing Then
-                                                    valueToparse = subProp.ToString()
-                                                Else
-                                                    ' Sous-propriété non trouvée dans ce log
-                                                    Continue For
-                                                End If
-                                            Catch ex As Exception
-                                                ' JSON invalide, ignorer cette entrée
-                                                failedCount += 1
-                                                Continue For
-                                            End Try
-                                        End If
 
                                         If Double.TryParse(valueToparse, Globalization.NumberStyles.Any,
                                                           Globalization.CultureInfo.InvariantCulture, val) Then
                                             parsedCount += 1
                                             ' Conversions d'unités selon le code DP
-                                            ' ✅ MODIFIÉ: Gérer les conversions pour les sous-propriétés aussi
-                                            Dim codeForConversion = If(isSubProperty, code.ToLower(), code.ToLower())
-                                            Select Case codeForConversion
-                                                Case "cur_power", "phase_a.power"
-                                                    val = val / 10.0 ' Watts
-                                                Case "cur_voltage", "phase_a.voltage"
-                                                    val = val / 10.0 ' Volts
-                                                Case "cur_current", "phase_a.electriccurrent"
-                                                    val = val / 1000.0 ' Amperes (mA → A)
-                                                Case "add_ele"
-                                                    val = val / 1000.0 ' kWh
-                                                Case "forward_energy_total"
-                                                    val = val / 100.0 ' kWh (compteur Tuya standard)
-                                                Case "phase_a"
-                                                    val = val / 10.0 ' Watts
-                                                Case "va_temperature"
-                                                    val = val / 10.0 ' °C (température * 10)
-                                                Case "humidity_value"
-                                                    ' Humidité déjà en %
-                                                    ' Pas de conversion
-                                            End Select
+                                            ' ✅ NOTE: Les valeurs des sous-propriétés phase_*.* sont déjà converties lors du décodage
+                                            ' Donc on ne doit PAS les reconvertir ici
+                                            Dim codeForConversion = code.ToLower()
+
+                                            ' Ne pas appliquer de conversion si c'est une sous-propriété phase_*.*
+                                            ' car elle est déjà convertie lors du décodage
+                                            If Not (codeForConversion.StartsWith("phase_a.") OrElse
+                                                   codeForConversion.StartsWith("phase_b.") OrElse
+                                                   codeForConversion.StartsWith("phase_c.")) Then
+                                                Select Case codeForConversion
+                                                    Case "cur_power"
+                                                        val = val / 10.0 ' Watts
+                                                    Case "cur_voltage"
+                                                        val = val / 10.0 ' Volts
+                                                    Case "cur_current"
+                                                        val = val / 1000.0 ' Amperes (mA → A)
+                                                    Case "add_ele"
+                                                        val = val / 1000.0 ' kWh
+                                                    Case "forward_energy_total"
+                                                        val = val / 100.0 ' kWh (compteur Tuya standard)
+                                                    Case "phase_a", "phase_b", "phase_c"
+                                                        val = val / 10.0 ' Watts
+                                                    Case "va_temperature"
+                                                        val = val / 10.0 ' °C (température * 10)
+                                                    Case "humidity_value"
+                                                        ' Humidité déjà en %
+                                                        ' Pas de conversion
+                                                End Select
+                                            End If
                                             numericValues.Add(val)
                                         Else
                                             failedCount += 1
