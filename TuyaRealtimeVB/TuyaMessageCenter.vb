@@ -82,10 +82,13 @@ Public Class TuyaMessageCenter
             End If
 
             ' Essai 2: Endpoint pour les notifications utilisateur
-            Dim messages2 = Await TryGetUserNotificationsAsync(pageNo, pageSize)
-            If messages2 IsNot Nothing Then
-                allMessages.AddRange(messages2)
-            End If
+            ' ⚠️ DÉSACTIVÉ: L'endpoint /v1.0/users/{uid}/messages n'existe pas selon la documentation Tuya
+            ' Si vous avez besoin d'autres types de messages, utilisez les paramètres message_type et message_sub_type
+            ' Documentation: https://developer.tuya.com/en/docs/cloud/e1581be6fa?id=Kbabe1ij7fivh
+            ' Dim messages2 = Await TryGetUserNotificationsAsync(pageNo, pageSize)
+            ' If messages2 IsNot Nothing Then
+            '     allMessages.AddRange(messages2)
+            ' End If
 
             Log($"=== Total: {allMessages.Count} message(s) récupéré(s) ===")
 
@@ -144,7 +147,9 @@ Public Class TuyaMessageCenter
             Dim token = Await _tokenProvider.GetAccessTokenAsync()
 
             ' Construire l'URL avec les paramètres de pagination
-            Dim url = $"{_cfg.OpenApiBase}{endpoint}?page_no={pageNo}&page_size={pageSize}"
+            ' ✅ CORRECTION: Ajouter recipient_id qui est obligatoire selon la documentation Tuya
+            ' Documentation: https://developer.tuya.com/en/docs/cloud/e1581be6fa?id=Kbabe1ij7fivh
+            Dim url = $"{_cfg.OpenApiBase}{endpoint}?recipient_id={_cfg.Uid}&page_no={pageNo}&page_size={pageSize}"
 
             Log($"Tentative d'appel API: {url}")
 
