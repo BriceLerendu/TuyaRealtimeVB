@@ -246,6 +246,13 @@ Public Class DashboardForm
         AddHandler notifItem.Click, AddressOf NotificationsMenuItem_Click
         menu.Items.Add(notifItem)
 
+        ' Message Center
+        Dim messageCenterItem = New ToolStripMenuItem("📬 Centre de Messages Tuya...") With {
+            .ForeColor = Color.White
+        }
+        AddHandler messageCenterItem.Click, AddressOf MessageCenterMenuItem_Click
+        menu.Items.Add(messageCenterItem)
+
         menu.Items.Add(New ToolStripSeparator())
 
         ' Administration des Homes/Rooms/Appareils
@@ -1638,6 +1645,30 @@ Public Class DashboardForm
             End Using
         Catch ex As Exception
             HandleError("Erreur ouverture paramètres notifications", ex)
+        End Try
+    End Sub
+
+    Private Sub MessageCenterMenuItem_Click(sender As Object, e As EventArgs)
+        Try
+            If _apiClient Is Nothing Then
+                MessageBox.Show(
+                    "Le client API n'est pas encore démarré." & Environment.NewLine & Environment.NewLine &
+                    "Veuillez d'abord charger les données (Fichier > Démarrer).",
+                    "Information", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                Return
+            End If
+
+            ' Créer un token provider avec la config actuelle
+            Dim tokenProvider As New TuyaTokenProvider(_config)
+
+            ' Ouvrir le formulaire du Message Center
+            Using messageCenterForm As New MessageCenterForm(_config, tokenProvider)
+                messageCenterForm.ShowDialog()
+            End Using
+        Catch ex As Exception
+            MessageBox.Show($"Erreur lors de l'ouverture du Message Center: {ex.Message}",
+                          "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            LogDebug($"Erreur MessageCenterMenuItem_Click: {ex.Message}")
         End Try
     End Sub
 
