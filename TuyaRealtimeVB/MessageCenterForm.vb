@@ -187,7 +187,7 @@ Public Class MessageCenterForm
             FilterMessages(_currentFilter)
 
             ' Mettre à jour le compteur de messages non lus
-            Dim unreadCount = _allMessages.Count(Function(m) Not m.IsRead)
+            Dim unreadCount = _allMessages.Where(Function(m) Not m.IsRead).Count()
             _unreadCountLabel.Text = $"Messages non lus: {unreadCount}"
 
             _statusLabel.Text = $"✅ {_allMessages.Count} message(s) chargé(s)"
