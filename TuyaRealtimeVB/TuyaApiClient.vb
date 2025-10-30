@@ -1705,6 +1705,173 @@ Public Class TuyaApiClient
     End Function
 #End Region
 
+#Region "Mobile Push Notification Service"
+    ''' <summary>
+    ''' Envoie une notification push vers l'application Tuya
+    ''' API: POST /v1.0/iot-03/messages/app-notifications/actions/push
+    ''' Documentation: https://developer.tuya.com/en/docs/cloud/571df1f27e?id=Kagp27bb0hkxe
+    ''' </summary>
+    ''' <param name="recipientId">ID du destinataire (uid de l'utilisateur)</param>
+    ''' <param name="title">Titre de la notification</param>
+    ''' <param name="content">Contenu de la notification</param>
+    ''' <param name="templateId">ID du template (optionnel)</param>
+    ''' <param name="extras">Données supplémentaires (optionnel)</param>
+    Public Async Function SendPushNotificationAsync(recipientId As String, title As String, content As String, Optional templateId As String = Nothing, Optional extras As Dictionary(Of String, Object) = Nothing) As Task(Of Boolean)
+        Try
+            Log($"=== Envoi de notification push ===")
+            Log($"  Destinataire: {recipientId}")
+            Log($"  Titre: {title}")
+            Log($"  Contenu: {content}")
+
+            ' Construire le body de la requête
+            Dim body As New Dictionary(Of String, Object) From {
+                {"recipient_id", recipientId},
+                {"title", title},
+                {"content", content}
+            }
+
+            ' Ajouter le template si fourni
+            If Not String.IsNullOrEmpty(templateId) Then
+                body("template_id") = templateId
+                Log($"  Template ID: {templateId}")
+            End If
+
+            ' Ajouter les extras si fournis
+            If extras IsNot Nothing AndAlso extras.Count > 0 Then
+                body("extras") = extras
+                Log($"  Extras: {Newtonsoft.Json.JsonConvert.SerializeObject(extras)}")
+            End If
+
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Log($"  Body JSON: {jsonBody}")
+
+            ' Endpoint pour l'envoi de notifications
+            Dim url = $"{_cfg.OpenApiBase}/v1.0/iot-03/messages/app-notifications/actions/push"
+            Log($"  URL: {url}")
+
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePostRequestAsync(url, jsonBody, token)
+            Dim success = ValidateResponse(response)
+
+            If success Then
+                Log($"✅ Notification push envoyée avec succès")
+            Else
+                Log($"❌ L'envoi de la notification a échoué")
+                Log($"   Réponse: {response}")
+            End If
+
+            Return success
+        Catch ex As Exception
+            LogError("SendPushNotificationAsync", ex)
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Récupère la liste des templates de notifications
+    ''' API: GET /v1.0/iot-03/msg-templates/app-notifications
+    ''' </summary>
+    Public Async Function GetNotificationTemplatesAsync() As Task(Of JArray)
+        Try
+            Log("=== Récupération des templates de notifications ===")
+
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = $"{_cfg.OpenApiBase}/v1.0/iot-03/msg-templates/app-notifications"
+            Log($"  URL: {url}")
+
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            If json("result") IsNot Nothing AndAlso TypeOf json("result") Is JArray Then
+                Dim templates = CType(json("result"), JArray)
+                Log($"✅ {templates.Count} template(s) récupéré(s)")
+                Return templates
+            End If
+
+            Log($"⚠️ Aucun template trouvé")
+            Return New JArray()
+        Catch ex As Exception
+            LogError("GetNotificationTemplatesAsync", ex)
+            Return New JArray()
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Récupère les détails d'un template de notification
+    ''' API: GET /v1.0/iot-03/msg-templates/app-notifications/{template_id}
+    ''' </summary>
+    Public Async Function GetNotificationTemplateDetailsAsync(templateId As String) As Task(Of JObject)
+        Try
+            Log($"=== Récupération des détails du template {templateId} ===")
+
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+            Dim url = $"{_cfg.OpenApiBase}/v1.0/iot-03/msg-templates/app-notifications/{templateId}"
+            Log($"  URL: {url}")
+
+            Dim json = Await MakeApiCallAsync(url, token)
+
+            If json("result") IsNot Nothing AndAlso TypeOf json("result") Is JObject Then
+                Log($"✅ Détails du template récupérés")
+                Return CType(json("result"), JObject)
+            End If
+
+            Log($"⚠️ Détails non disponibles pour le template {templateId}")
+            Return Nothing
+        Catch ex As Exception
+            LogError("GetNotificationTemplateDetailsAsync", ex)
+            Return Nothing
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Crée un nouveau template de notification
+    ''' API: POST /v1.0/iot-03/msg-templates/app-notifications
+    ''' </summary>
+    Public Async Function CreateNotificationTemplateAsync(templateName As String, title As String, content As String) As Task(Of String)
+        Try
+            Log($"=== Création d'un template de notification ===")
+            Log($"  Nom: {templateName}")
+            Log($"  Titre: {title}")
+            Log($"  Contenu: {content}")
+
+            Dim body As New Dictionary(Of String, Object) From {
+                {"name", templateName},
+                {"title", title},
+                {"content", content}
+            }
+
+            Dim jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(body)
+            Log($"  Body JSON: {jsonBody}")
+
+            Dim url = $"{_cfg.OpenApiBase}/v1.0/iot-03/msg-templates/app-notifications"
+            Log($"  URL: {url}")
+
+            Dim token = Await _tokenProvider.GetAccessTokenAsync()
+
+            Dim response = Await ExecutePostRequestAsync(url, jsonBody, token)
+            Dim jsonResponse = JObject.Parse(response)
+
+            If GetResponseSuccess(jsonResponse) Then
+                Dim templateId = GetJsonString(jsonResponse("result"), "template_id")
+                If String.IsNullOrEmpty(templateId) Then
+                    ' Parfois l'API retourne directement l'ID dans result
+                    templateId = jsonResponse("result")?.ToString()
+                End If
+                Log($"✅ Template créé avec succès (ID: {templateId})")
+                Return templateId
+            Else
+                Dim errorCode = GetJsonString(jsonResponse, "code")
+                Dim errorMsg = If(GetJsonString(jsonResponse, "msg"), "Erreur inconnue")
+                Log($"❌ Échec création template: code={errorCode}, msg={errorMsg}")
+                Return Nothing
+            End If
+        Catch ex As Exception
+            LogError("CreateNotificationTemplateAsync", ex)
+            Return Nothing
+        End Try
+    End Function
+#End Region
+
 #Region "IDisposable"
     ''' <summary>
     ''' ✅ PHASE 1 - Nettoyage des ressources
