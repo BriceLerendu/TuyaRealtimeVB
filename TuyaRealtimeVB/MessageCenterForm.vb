@@ -227,11 +227,21 @@ Public Class MessageCenterForm
                 _statusLabel.Text = "ℹ️ Aucun message disponible"
                 MessageBox.Show(
                     "Aucun message n'a été trouvé." & Environment.NewLine & Environment.NewLine &
-                    "Vérifiez :" & Environment.NewLine &
-                    "1. Que vous avez des messages dans l'application SmartLife" & Environment.NewLine &
-                    "2. Que votre Access ID a les permissions nécessaires" & Environment.NewLine &
-                    "3. Les logs dans la console pour voir les détails des appels API",
-                    "Aucun message",
+                    "📋 VÉRIFICATIONS À FAIRE :" & Environment.NewLine & Environment.NewLine &
+                    "1️⃣ Activez l'API 'Message Service' dans votre projet Tuya" & Environment.NewLine &
+                    "   → Allez sur https://iot.tuya.com" & Environment.NewLine &
+                    "   → Cloud → Project → Votre Projet → API" & Environment.NewLine &
+                    "   → Recherchez 'Message' et activez le service" & Environment.NewLine & Environment.NewLine &
+                    "2️⃣ Vérifiez qu'il y a des messages dans SmartLife" & Environment.NewLine &
+                    "   → Ouvrez l'app SmartLife" & Environment.NewLine &
+                    "   → Onglet 'Moi' → Centre de messages" & Environment.NewLine & Environment.NewLine &
+                    "3️⃣ Consultez les LOGS dans la zone noire en bas" & Environment.NewLine &
+                    "   → Regardez le code d'erreur retourné par l'API" & Environment.NewLine &
+                    "   → Le diagnostic vous indiquera le problème exact" & Environment.NewLine & Environment.NewLine &
+                    "💡 Note: L'API 'Mobile Push Notification Service' permet" & Environment.NewLine &
+                    "    d'ENVOYER des notifications, pas de les RECEVOIR." & Environment.NewLine &
+                    "    Il faut activer 'Message Service' pour recevoir.",
+                    "Aucun message trouvé - Aide au diagnostic",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information)
             Else

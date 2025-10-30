@@ -167,11 +167,29 @@ Public Class TuyaMessageCenter
                 Log("✅ Réponse API success=true")
 
                 ' Parser les messages selon le format de la réponse
-                Return ParseMessagesFromResponse(json)
+                Dim messages = ParseMessagesFromResponse(json)
+                Log($"   → {If(messages IsNot Nothing, messages.Count, 0)} message(s) parsé(s)")
+                Return messages
             Else
                 Dim errorCode = GetJsonString(json, "code")
                 Dim errorMsg = GetJsonString(json, "msg")
-                Log($"⚠️ Endpoint {endpoint} - success=false, code: {errorCode}, msg: {errorMsg}")
+                Log($"⚠️ Endpoint {endpoint} - success=false")
+                Log($"   → Code erreur: {errorCode}")
+                Log($"   → Message: {errorMsg}")
+                Log("")
+                Log("💡 DIAGNOSTIC:")
+                If errorCode = "1106" OrElse errorCode = "1100" Then
+                    Log("   → Erreur d'autorisation - Vérifiez que l'API 'Message Service' est activée")
+                    Log("   → Allez sur https://iot.tuya.com → Cloud → Project → Votre Projet → API")
+                    Log("   → Recherchez 'Message' et activez le service")
+                ElseIf errorCode = "1004" Then
+                    Log("   → Signature invalide - Problème de token ou de configuration")
+                ElseIf errorCode = "2406" Then
+                    Log("   → Paramètres manquants ou invalides")
+                Else
+                    Log($"   → Code d'erreur inconnu: {errorCode}")
+                    Log("   → Consultez https://developer.tuya.com/en/docs/iot/error-code")
+                End If
                 Return Nothing
             End If
         Catch ex As Exception
