@@ -150,15 +150,23 @@ Public Class TuyaMessageCenter
 
             Dim json = Await MakeApiCallAsync(url, token)
 
+            ' Afficher la réponse complète pour debug
+            If json IsNot Nothing Then
+                Log("📥 Réponse API complète:")
+                Log(json.ToString(Newtonsoft.Json.Formatting.Indented))
+            Else
+                Log("⚠️ Réponse API NULL")
+            End If
+
             If json IsNot Nothing AndAlso GetJsonBool(json, "success") Then
-                Log("✅ Réponse API réussie")
+                Log("✅ Réponse API success=true")
 
                 ' Parser les messages selon le format de la réponse
                 Return ParseMessagesFromResponse(json)
             Else
                 Dim errorCode = GetJsonString(json, "code")
                 Dim errorMsg = GetJsonString(json, "msg")
-                Log($"⚠️ Endpoint {endpoint} - code: {errorCode}, msg: {errorMsg}")
+                Log($"⚠️ Endpoint {endpoint} - success=false, code: {errorCode}, msg: {errorMsg}")
                 Return Nothing
             End If
         Catch ex As Exception
@@ -181,10 +189,21 @@ Public Class TuyaMessageCenter
 
             Dim json = Await MakeApiCallAsync(url, token)
 
+            ' Afficher la réponse complète pour debug
+            If json IsNot Nothing Then
+                Log("📥 Réponse API notifications utilisateur:")
+                Log(json.ToString(Newtonsoft.Json.Formatting.Indented))
+            Else
+                Log("⚠️ Réponse API notifications utilisateur NULL")
+            End If
+
             If json IsNot Nothing AndAlso GetJsonBool(json, "success") Then
-                Log("✅ Notifications utilisateur récupérées")
+                Log("✅ Notifications utilisateur success=true")
                 Return ParseMessagesFromResponse(json)
             Else
+                Dim errorCode = GetJsonString(json, "code")
+                Dim errorMsg = GetJsonString(json, "msg")
+                Log($"⚠️ Notifications utilisateur - code: {errorCode}, msg: {errorMsg}")
                 Return Nothing
             End If
         Catch ex As Exception

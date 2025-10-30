@@ -180,8 +180,12 @@ Public Class MessageCenterForm
             _btnRefresh.Enabled = False
             _listView.Items.Clear()
 
+            Log("=== Début du chargement des messages ===")
+
             ' Récupérer tous les messages
             _allMessages = Await _messageCenter.GetAllMessagesAsync()
+
+            Log($"Messages récupérés : {_allMessages.Count}")
 
             ' Afficher les messages filtrés
             FilterMessages(_currentFilter)
@@ -190,9 +194,24 @@ Public Class MessageCenterForm
             Dim unreadCount = _allMessages.Where(Function(m) Not m.IsRead).Count()
             _unreadCountLabel.Text = $"Messages non lus: {unreadCount}"
 
-            _statusLabel.Text = $"✅ {_allMessages.Count} message(s) chargé(s)"
+            If _allMessages.Count = 0 Then
+                _statusLabel.Text = "ℹ️ Aucun message disponible"
+                MessageBox.Show(
+                    "Aucun message n'a été trouvé." & Environment.NewLine & Environment.NewLine &
+                    "Vérifiez :" & Environment.NewLine &
+                    "1. Que vous avez des messages dans l'application SmartLife" & Environment.NewLine &
+                    "2. Que votre Access ID a les permissions nécessaires" & Environment.NewLine &
+                    "3. Les logs dans la console pour voir les détails des appels API",
+                    "Aucun message",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information)
+            Else
+                _statusLabel.Text = $"✅ {_allMessages.Count} message(s) chargé(s)"
+            End If
         Catch ex As Exception
             _statusLabel.Text = $"❌ Erreur: {ex.Message}"
+            Log($"ERREUR LoadMessagesAsync: {ex.Message}")
+            Log($"StackTrace: {ex.StackTrace}")
             MessageBox.Show($"Erreur lors du chargement des messages: {ex.Message}", "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
         Finally
             _btnRefresh.Enabled = True
