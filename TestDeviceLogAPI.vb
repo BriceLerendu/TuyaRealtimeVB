@@ -1,11 +1,12 @@
 Imports System
 Imports System.Threading.Tasks
+Imports System.Linq
 
 ''' <summary>
 ''' Script de test simple pour vérifier si l'API Device Log Query fonctionne
 ''' Usage: Lancez l'application normalement, puis vérifiez les logs dans la console
 ''' </summary>
-Module TestDeviceLogAPI
+Public Class TestDeviceLogAPI
 
     ''' <summary>
     ''' Test de l'API Device Log Query sur un appareil
@@ -173,4 +174,4 @@ Module TestDeviceLogAPI
         End Property
     End Class
 
-End Module
+End Class
