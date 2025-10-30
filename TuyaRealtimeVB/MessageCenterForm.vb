@@ -1,5 +1,6 @@
 Imports System.Drawing
 Imports System.Windows.Forms
+Imports System.Linq
 
 ''' <summary>
 ''' Formulaire pour afficher le Message Center de Tuya
