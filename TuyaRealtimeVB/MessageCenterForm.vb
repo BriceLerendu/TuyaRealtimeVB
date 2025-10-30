@@ -27,6 +27,8 @@ Public Class MessageCenterForm
     Private _btnAlarm As Button
     Private _currentFilter As TuyaMessageCenter.MessageType = TuyaMessageCenter.MessageType.All
     Private _allMessages As New List(Of TuyaMessageCenter.TuyaMessage)
+    Private _logTextBox As TextBox
+    Private _logSplitter As Splitter
 #End Region
 
 #Region "Initialisation"
@@ -50,13 +52,24 @@ Public Class MessageCenterForm
         Dim topPanel = CreateTopPanel()
         Controls.Add(topPanel)
 
-        ' ListView pour afficher les messages
-        _listView = CreateMessageListView()
-        Controls.Add(_listView)
-
         ' Panel inférieur (barre de statut)
         Dim bottomPanel = CreateBottomPanel()
         Controls.Add(bottomPanel)
+
+        ' Panel de logs avec splitter
+        _logTextBox = CreateLogPanel()
+        Controls.Add(_logTextBox)
+
+        _logSplitter = New Splitter With {
+            .Dock = DockStyle.Bottom,
+            .Height = 3,
+            .BackColor = ThemeConstants.DarkBg
+        }
+        Controls.Add(_logSplitter)
+
+        ' ListView pour afficher les messages
+        _listView = CreateMessageListView()
+        Controls.Add(_listView)
 
         ' Charger les messages au démarrage
         LoadMessagesAsync()
@@ -170,6 +183,22 @@ Public Class MessageCenterForm
         panel.Controls.Add(_statusLabel)
 
         Return panel
+    End Function
+
+    Private Function CreateLogPanel() As TextBox
+        Dim logBox As New TextBox With {
+            .Dock = DockStyle.Bottom,
+            .Height = 200,
+            .Multiline = True,
+            .ReadOnly = True,
+            .ScrollBars = ScrollBars.Both,
+            .BackColor = Color.Black,
+            .ForeColor = Color.LimeGreen,
+            .Font = New Font("Consolas", 9),
+            .WordWrap = False
+        }
+
+        Return logBox
     End Function
 #End Region
 
@@ -390,8 +419,25 @@ Public Class MessageCenterForm
 
 #Region "Logging"
     Private Sub Log(message As String)
-        ' Pour debug - peut être affiché dans la console ou ignoré
-        Console.WriteLine($"[MessageCenter] {message}")
+        Try
+            ' Thread-safe: Invoke si nécessaire
+            If _logTextBox.InvokeRequired Then
+                _logTextBox.Invoke(Sub() Log(message))
+                Return
+            End If
+
+            Dim timestamp = DateTime.Now.ToString("HH:mm:ss.fff")
+            Dim logLine = $"[{timestamp}] {message}{Environment.NewLine}"
+
+            _logTextBox.AppendText(logLine)
+
+            ' Scroller automatiquement vers le bas
+            _logTextBox.SelectionStart = _logTextBox.TextLength
+            _logTextBox.ScrollToCaret()
+        Catch ex As Exception
+            ' Fallback vers Console si l'interface n'est pas prête
+            Console.WriteLine($"[MessageCenter] {message}")
+        End Try
     End Sub
 #End Region
 
